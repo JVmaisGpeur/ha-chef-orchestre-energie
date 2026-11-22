@@ -124,6 +124,7 @@ class ChefSensor(ChefEntity, SensorEntity):
                 return None
             return {
                 "reason": plan.reason,
+                "missing": self.orch.missing,
                 "window_start": plan.window_start.isoformat() if plan.window_start else None,
                 "window_end": plan.window_end.isoformat() if plan.window_end else None,
                 "capacity_short": plan.capacity_short,

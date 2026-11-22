@@ -98,6 +98,7 @@ from .timeline import (
     in_window,
     parse_segments,
     parse_window,
+    segment_for_step,
     spread,
     step_starts,
 )
@@ -138,6 +139,7 @@ class Orchestrator:
         self.import_limit: float | None = None
         self.subscribed_kva: float | None = None
         self.sources_ok = False
+        self.missing: list[str] = []
         self.tariff_entities: dict[str, str] = {}
         self.battery_entities: dict[str, str] = {}
         self._listeners: list[Callable[[], None]] = []
@@ -382,6 +384,7 @@ class Orchestrator:
             self.plan = await self._async_compute()
         except Exception:  # noqa: BLE001 - le pilotage ne doit jamais planter HA
             _LOGGER.exception("Calcul du plan impossible")
+            self.missing = ["error"]
             self.plan = Plan(PLAN_MISSING_DATA, REASON_MISSING_DATA)
         finally:
             self._lock_busy = False
@@ -390,7 +393,9 @@ class Orchestrator:
         await self._async_control()
 
     async def _async_compute(self) -> Plan:
+        self.missing = []
         if not self.sources_ok:
+            self.missing.append("sources")
             return Plan(PLAN_MISSING_DATA, REASON_MISSING_DATA)
         now = dt_util.now()
         starts = step_starts(now, HORIZON_HOURS, STEP_MINUTES)
@@ -400,8 +405,12 @@ class Orchestrator:
             )
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Prévisions tarifaires indisponibles : %s", err)
+            self.missing.append("tariff_forecast")
             return Plan(PLAN_MISSING_DATA, REASON_MISSING_DATA)
         segments = parse_segments(resp or {})
+        if not segments:
+            self.missing.append("tariff_forecast")
+            return Plan(PLAN_MISSING_DATA, REASON_MISSING_DATA)
         fill_unknown_prices(
             segments,
             src.tariff_grid(self.hass, self.tariff_entities.get("prix_actuel")),
@@ -419,6 +428,10 @@ class Orchestrator:
         battery = self._battery()
         kva = self._subscribed_kva()
         self.subscribed_kva = kva
+        if battery is None:
+            self.missing.append("battery_state")
+        if kva is None:
+            self.missing.append("subscribed_power")
         if battery is None or kva is None:
             return Plan(PLAN_MISSING_DATA, REASON_MISSING_DATA)
         margin = max(float(self.cfg[CONF_MARGIN]), 10.0) / 100
@@ -427,7 +440,7 @@ class Orchestrator:
         steps: list[Step] = []
         per_step = STEP_MINUTES / 60
         for i, t in enumerate(starts):
-            seg = at(segments, t)
+            seg = segment_for_step(segments, t, STEP)
             if seg is None:
                 break  # au-delà de l'horizon des tarifs
             steps.append(
@@ -456,7 +469,11 @@ class Orchestrator:
             else:
                 self.override = None
                 self._save()
+        if not steps:
+            self.missing.append("tariff_forecast")
         plan = compute_plan(steps, battery, settings, override)
+        if plan.state == PLAN_MISSING_DATA and not self.missing:
+            self.missing.append("off_peak_price")
         if not self.auto_control:
             plan.state = PLAN_SUSPENDED
         return plan

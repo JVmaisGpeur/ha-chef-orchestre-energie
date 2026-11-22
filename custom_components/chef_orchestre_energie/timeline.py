@@ -98,6 +98,16 @@ def at(segments: list[Segment], when: datetime) -> Segment | None:
     return None
 
 
+def segment_for_step(segments: list[Segment], start: datetime, step: timedelta) -> Segment | None:
+    """Tranche qui couvre le milieu du pas.
+
+    Les tranches commencent à l'instant de l'appel (23 h 49 min 12 s), alors que la
+    grille démarre au quart d'heure (23 h 45) : on regarde donc le milieu du pas,
+    puis sa fin, pour que le pas en cours trouve toujours son tarif.
+    """
+    return at(segments, start + step / 2) or at(segments, start + step - timedelta(seconds=1))
+
+
 def spread(
     periods: list[tuple[datetime, datetime, float]], starts: list[datetime], step: timedelta
 ) -> list[float]:

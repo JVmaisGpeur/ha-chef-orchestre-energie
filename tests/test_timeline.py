@@ -71,3 +71,15 @@ def test_fenetres_habituelles():
     assert not T.in_window(datetime(2026, 1, 1, 3, 0), w)
     assert T.parse_window("bad") is None
     assert not T.in_window(datetime(2026, 1, 1, 1, 0), None)
+
+
+def test_premier_pas_avant_le_debut_des_tranches():
+    """Les tranches commencent à l'instant de l'appel, la grille au quart d'heure précédent."""
+    now = datetime(2026, 11, 22, 23, 49, 12, tzinfo=TZ)
+    resp = {"segments": [{"debut": now.isoformat(), "fin": datetime(2026, 11, 23, 6, tzinfo=TZ).isoformat(),
+                          "periode": "hc", "prix": 0.17, "heures_creuses": True}]}
+    segs = T.parse_segments(resp)
+    starts = T.step_starts(now, 1, 15)
+    assert starts[0].minute == 45
+    assert T.at(segs, starts[0]) is None  # l'ancien comportement
+    assert T.segment_for_step(segs, starts[0], timedelta(minutes=15)).price == 0.17

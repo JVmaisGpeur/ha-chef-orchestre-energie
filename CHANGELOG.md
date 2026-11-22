@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.2 – 22/11/2026
+
+- Correction : le plan restait sur « Données manquantes ». Les prévisions tarifaires commencent à l'instant de l'appel, alors que la grille de calcul démarre au quart d'heure précédent : le premier pas ne trouvait pas son tarif et le calcul s'arrêtait. Chaque pas prend maintenant la tranche qui couvre son milieu.
+- Le capteur « Plan de la nuit » indique ce qui manque (attribut `missing`), et la carte l'affiche dans l'alerte.
+
+### Interface
+
+- Ajout de l'attribut `missing` au capteur `night_plan` : `sources`, `tariff_forecast`, `battery_state`, `subscribed_power`, `off_peak_price`, `error`.
+
 ## 1.1.1 – 22/11/2026
 
 - Correction : les compteurs d'énergie en Wh, MWh ou GWh (Enphase, par exemple) sont convertis en kWh, chacun selon l'unité enregistrée avec ses statistiques, même s'il est momentanément indisponible. Avant, la consommation apprise pouvait être 1 000 fois trop faible ou trop forte.

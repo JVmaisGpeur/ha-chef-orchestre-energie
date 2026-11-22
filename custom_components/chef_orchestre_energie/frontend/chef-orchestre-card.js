@@ -8,7 +8,7 @@
  *   show_modes: true       # frise des modes prévus
  *   show_settings: true    # réglages rapides
  */
-const CARD_VERSION = "1.1.0";
+const CARD_VERSION = "1.1.2";
 const DOMAIN = "chef_orchestre_energie";
 
 const I18N = {
@@ -27,6 +27,9 @@ const I18N = {
       suspended: "Pilotage suspendu : aucune commande n'est envoyée à la batterie.",
       missing: "Données manquantes : aucune commande n'est envoyée. Consulte Paramètres → Réparations.",
     },
+    missingItems: { sources: "intégrations ou entités introuvables", tariff_forecast: "prévisions tarifaires",
+      battery_state: "état de la batterie (capacité, SOC)", subscribed_power: "puissance souscrite",
+      off_peak_price: "prix des heures creuses", error: "erreur de calcul (voir les journaux)" },
     modeNames: { off: "Arrêt", grid_charge: "Charge réseau", smart: "Couplage intelligent", smart_charge: "Réserve (stocke le solaire)" },
     profiles: { cautious: "Prudent", balanced: "Équilibré", economical: "Économe" },
     ed: { name: "Titre", show_chart: "Afficher le graphique des 48 h", show_modes: "Afficher la frise des modes", show_settings: "Afficher les réglages rapides" },
@@ -46,6 +49,9 @@ const I18N = {
       suspended: "Control suspended: no command is sent to the battery.",
       missing: "Data missing: no command is sent. See Settings → Repairs.",
     },
+    missingItems: { sources: "integrations or entities not found", tariff_forecast: "tariff forecast",
+      battery_state: "battery state (capacity, SOC)", subscribed_power: "subscribed power",
+      off_peak_price: "off-peak price", error: "calculation error (see the logs)" },
     modeNames: { off: "Off", grid_charge: "Grid charge", smart: "Smart matching", smart_charge: "Reserve (stores solar)" },
     profiles: { cautious: "Cautious", balanced: "Balanced", economical: "Economical" },
     ed: { name: "Title", show_chart: "Show the 48 h chart", show_modes: "Show the mode strip", show_settings: "Show quick settings" },
@@ -186,7 +192,10 @@ class ChefOrchestreCard extends HTMLElement {
     if (a.may_not_finish) alerts.push(["mdi:timer-alert-outline", t.alerts.finish, "warn"]);
     if (a.capacity_short) alerts.push(["mdi:battery-alert-variant-outline", t.alerts.short, "info"]);
     if (state === "suspended") alerts.push(["mdi:pause-circle-outline", t.alerts.suspended, "warn"]);
-    if (state === "missing_data") alerts.push(["mdi:alert-circle-outline", t.alerts.missing, "crit"]);
+    if (state === "missing_data") {
+      const items = (a.missing || []).map((k) => t.missingItems[k] || k);
+      alerts.push(["mdi:alert-circle-outline", t.alerts.missing + (items.length ? ` (${items.join(", ")})` : ""), "crit"]);
+    }
 
     const charge = state === "charge";
     const energy = num(this._st("energy_to_charge")?.state);
