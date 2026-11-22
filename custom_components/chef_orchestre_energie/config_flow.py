@@ -8,7 +8,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
-from homeassistant.helpers import selector
+from homeassistant.helpers import device_registry as dr, selector
 
 from . import sources as src
 from .const import (
@@ -97,25 +97,53 @@ def _opt(key: str, cur: dict, default: Any = None) -> vol.Optional:
     return vol.Optional(key, description={"suggested_value": value} if value not in (None, "") else None)
 
 
+def _list(options: list[tuple[str, str]], multiple: bool = False) -> selector.SelectSelector:
+    """Liste simple : le sélecteur le plus sûr à afficher, sur ordinateur comme sur mobile."""
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[selector.SelectOptionDict(value=v, label=l) for v, l in options],
+            multiple=multiple,
+            mode=selector.SelectSelectorMode.LIST if multiple else selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
+def _tariff_options(hass) -> list[tuple[str, str]]:
+    return [(e.entry_id, e.title) for e in hass.config_entries.async_entries(TARIFF_DOMAIN)]
+
+
+def _battery_options(hass) -> list[tuple[str, str]]:
+    """Appareils de ha-zendure-solarflow-local : batteries seules et Groupes."""
+    reg = dr.async_get(hass)
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for entry in hass.config_entries.async_entries(BATTERY_DOMAIN):
+        for dev in dr.async_entries_for_config_entry(reg, entry.entry_id):
+            if dev.id in seen:
+                continue
+            seen.add(dev.id)
+            out.append((dev.id, dev.name_by_user or dev.name or entry.title))
+    return out
+
+
+def _default(cur: dict, key: str, options: list[tuple[str, str]]):
+    values = [v for v, _ in options]
+    if cur.get(key) in values:
+        return cur[key]
+    return values[0] if len(values) == 1 else vol.UNDEFINED
+
+
 def _sources_schema(hass, cur: dict) -> vol.Schema:
     solar = src.solar_entries(hass)
+    tariffs = _tariff_options(hass)
+    batteries = _battery_options(hass)
+    solar_ids = [e for e, _ in solar]
+    solar_default = [e for e in cur.get(CONF_SOLAR_ENTRIES, solar_ids) if e in solar_ids] or solar_ids
     return vol.Schema(
         {
-            vol.Required(CONF_TARIFF_ENTRY, default=cur.get(CONF_TARIFF_ENTRY, vol.UNDEFINED)): selector.ConfigEntrySelector(
-                selector.ConfigEntrySelectorConfig(integration=TARIFF_DOMAIN)
-            ),
-            vol.Required(CONF_BATTERY_DEVICE, default=cur.get(CONF_BATTERY_DEVICE, vol.UNDEFINED)): selector.DeviceSelector(
-                selector.DeviceSelectorConfig(integration=BATTERY_DOMAIN)
-            ),
-            vol.Required(
-                CONF_SOLAR_ENTRIES, default=cur.get(CONF_SOLAR_ENTRIES, [e for e, _ in solar])
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[selector.SelectOptionDict(value=e, label=t) for e, t in solar],
-                    multiple=True,
-                    mode=selector.SelectSelectorMode.LIST,
-                )
-            ),
+            vol.Required(CONF_TARIFF_ENTRY, default=_default(cur, CONF_TARIFF_ENTRY, tariffs)): _list(tariffs),
+            vol.Required(CONF_BATTERY_DEVICE, default=_default(cur, CONF_BATTERY_DEVICE, batteries)): _list(batteries),
+            vol.Required(CONF_SOLAR_ENTRIES, default=solar_default): _list(solar, multiple=True),
         }
     )
 

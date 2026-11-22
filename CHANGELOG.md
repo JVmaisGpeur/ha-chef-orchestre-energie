@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1 – 22/11/2026
+
+- Correction : l'écran « Sources » de l'assistant s'affichait vide. Le contrat de tarifs et la batterie se choisissent maintenant dans des listes simples, comme les prévisions solaires.
+
 ## 1.0.0 – 22/11/2026
 
 Première version.
