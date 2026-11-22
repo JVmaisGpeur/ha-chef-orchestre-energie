@@ -168,3 +168,11 @@ def measured_efficiency(charged_kwh: float, discharged_kwh: float, default: floa
     if charged_kwh is None or discharged_kwh is None or charged_kwh < 5:
         return default
     return round(min(0.98, max(0.6, discharged_kwh / charged_kwh)), 3)
+
+
+ENERGY_FACTORS = {"wh": 0.001, "kwh": 1.0, "mwh": 1000.0, "gwh": 1_000_000.0}
+
+
+def energy_factor(unit: str | None) -> float:
+    """Facteur pour convertir une énergie en kWh (Enphase compte en MWh, d'autres en Wh)."""
+    return ENERGY_FACTORS.get((unit or "kWh").strip().lower(), 1.0)

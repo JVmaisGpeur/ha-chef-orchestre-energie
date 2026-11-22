@@ -19,6 +19,13 @@
           "grid_export_sensor": "Énergie injectée sur le réseau",
           "solar_actual_sensor": "Énergie solaire réellement produite",
           "daily_kwh": "Consommation journalière moyenne (premiers jours)"
+        },
+        "data_description": {
+          "house_energy_sensor": "Seulement s'il mesure la maison seule. Laissez vide avec des batteries AC (Zendure AC, AC+) : leur charge et leur décharge seraient comptées comme de la consommation.",
+          "grid_import_sensor": "Énergie cumulée soutirée au réseau (ex. Enphase « Consommation d'énergie nette cumulée »).",
+          "grid_export_sensor": "Énergie cumulée injectée sur le réseau (ex. Enphase « Production d'énergie nette cumulée »).",
+          "solar_actual_sensor": "Production solaire cumulée (ex. Enphase « Énergie fournie CT de production »). Sert aussi à corriger la prévision.",
+          "daily_kwh": "Utilisée tant que 7 jours d'historique ne sont pas appris."
         }
       },
       "economy": {
@@ -113,6 +120,13 @@
           "grid_export_sensor": "Énergie injectée sur le réseau",
           "solar_actual_sensor": "Énergie solaire réellement produite",
           "daily_kwh": "Consommation journalière moyenne (premiers jours)"
+        },
+        "data_description": {
+          "house_energy_sensor": "Seulement s'il mesure la maison seule. Laissez vide avec des batteries AC (Zendure AC, AC+) : leur charge et leur décharge seraient comptées comme de la consommation.",
+          "grid_import_sensor": "Énergie cumulée soutirée au réseau (ex. Enphase « Consommation d'énergie nette cumulée »).",
+          "grid_export_sensor": "Énergie cumulée injectée sur le réseau (ex. Enphase « Production d'énergie nette cumulée »).",
+          "solar_actual_sensor": "Production solaire cumulée (ex. Enphase « Énergie fournie CT de production »). Sert aussi à corriger la prévision.",
+          "daily_kwh": "Utilisée tant que 7 jours d'historique ne sont pas appris."
         }
       },
       "sources": {

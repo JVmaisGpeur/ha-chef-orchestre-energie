@@ -19,6 +19,13 @@
           "grid_export_sensor": "Grid export energy",
           "solar_actual_sensor": "Actual solar production energy",
           "daily_kwh": "Average daily consumption (first days)"
+        },
+        "data_description": {
+          "house_energy_sensor": "Only if it measures the house alone. Leave empty with AC batteries (Zendure AC, AC+): their charge and discharge would be counted as consumption.",
+          "grid_import_sensor": "Cumulative energy imported from the grid (e.g. Enphase \"Lifetime net energy consumption\").",
+          "grid_export_sensor": "Cumulative energy exported to the grid (e.g. Enphase \"Lifetime net energy production\").",
+          "solar_actual_sensor": "Cumulative solar production (e.g. Enphase \"Production CT energy delivered\"). Also used to correct the forecast.",
+          "daily_kwh": "Used until 7 days of history are learned."
         }
       },
       "economy": {
@@ -113,6 +120,13 @@
           "grid_export_sensor": "Grid export energy",
           "solar_actual_sensor": "Actual solar production energy",
           "daily_kwh": "Average daily consumption (first days)"
+        },
+        "data_description": {
+          "house_energy_sensor": "Only if it measures the house alone. Leave empty with AC batteries (Zendure AC, AC+): their charge and discharge would be counted as consumption.",
+          "grid_import_sensor": "Cumulative energy imported from the grid (e.g. Enphase \"Lifetime net energy consumption\").",
+          "grid_export_sensor": "Cumulative energy exported to the grid (e.g. Enphase \"Lifetime net energy production\").",
+          "solar_actual_sensor": "Cumulative solar production (e.g. Enphase \"Production CT energy delivered\"). Also used to correct the forecast.",
+          "daily_kwh": "Used until 7 days of history are learned."
         }
       },
       "sources": {

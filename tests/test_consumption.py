@@ -82,3 +82,10 @@ def test_rendement_mesure():
     assert C.measured_efficiency(100, 86, 0.85) == 0.86
     assert C.measured_efficiency(2, 1, 0.85) == 0.85
     assert C.measured_efficiency(100, 10, 0.85) == 0.6
+
+
+def test_unites_d_energie():
+    assert C.energy_factor("MWh") == 1000
+    assert C.energy_factor("Wh") == 0.001
+    assert C.energy_factor("kWh") == 1
+    assert C.energy_factor(None) == 1

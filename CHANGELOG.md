@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1 – 22/11/2026
+
+- Correction : les compteurs d'énergie en Wh, MWh ou GWh (Enphase, par exemple) sont convertis en kWh, chacun selon l'unité enregistrée avec ses statistiques, même s'il est momentanément indisponible. Avant, la consommation apprise pouvait être 1 000 fois trop faible ou trop forte.
+- Aide ajoutée sous chaque capteur de l'écran Consommation, avec des exemples Enphase, et l'avertissement sur les batteries AC.
+
 ## 1.1.0 – 22/11/2026
 
 - Nouvelle carte Lovelace « Chef d'orchestre énergie », livrée avec l'intégration et chargée automatiquement (`type: custom:chef-orchestre-card`) :

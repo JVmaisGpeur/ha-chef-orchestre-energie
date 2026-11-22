@@ -13,6 +13,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
+from .consumption import energy_factor
 from .const import BATTERY_DOMAIN, ENERGY_COUNTER_KEYS, SOLAR_DOMAINS, TARIFF_DOMAIN
 from .timeline import wh_hours_to_periods
 
@@ -165,18 +166,37 @@ async def async_hourly_sums(
         return {}
     try:
         from homeassistant.components.recorder import get_instance
-        from homeassistant.components.recorder.statistics import statistics_during_period
+        from homeassistant.components.recorder.statistics import (
+            get_metadata,
+            statistics_during_period,
+        )
     except ImportError:  # pragma: no cover - recorder absent
         return {}
+    recorder = get_instance(hass)
     try:
-        stats = await get_instance(hass).async_add_executor_job(
+        stats = await recorder.async_add_executor_job(
             statistics_during_period, hass, start, end, set(ids), "hour", None, {"sum"}
         )
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Lecture des statistiques impossible : %s", err)
         return {}
+    # Unité enregistrée avec les statistiques : connue même si le capteur est indisponible
+    units: dict[str, str | None] = {}
+    try:
+        meta = await recorder.async_add_executor_job(
+            lambda: get_metadata(hass, statistic_ids=set(ids))
+        )
+        units = {sid: m[1].get("unit_of_measurement") for sid, m in meta.items()}
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Unités des statistiques illisibles : %s", err)
     out: dict[str, list[tuple[datetime, float]]] = {}
     for sid, rows in stats.items():
+        # Chaque capteur est ramené en kWh selon sa propre unité
+        unit = units.get(sid)
+        if unit is None:
+            st = hass.states.get(sid)
+            unit = st.attributes.get("unit_of_measurement") if st else None
+        factor = energy_factor(unit)
         pts = []
         for row in rows:
             ts = row.get("start")
@@ -184,7 +204,7 @@ async def async_hourly_sums(
                 ts = dt_util.utc_from_timestamp(ts)
             if ts is None or row.get("sum") is None:
                 continue
-            pts.append((dt_util.as_local(ts), float(row["sum"])))
+            pts.append((dt_util.as_local(ts), float(row["sum"]) * factor))
         out[sid] = pts
     return out
 
