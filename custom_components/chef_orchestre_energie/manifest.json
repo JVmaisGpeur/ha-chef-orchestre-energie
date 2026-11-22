@@ -1,0 +1,21 @@
+{
+  "domain": "chef_orchestre_energie",
+  "name": "Chef d'orchestre énergie",
+  "after_dependencies": [
+    "energy",
+    "forecast_solar",
+    "recorder"
+  ],
+  "codeowners": [
+    "@JVmaisGpeur"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/JVmaisGpeur/ha-chef-orchestre-energie",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/JVmaisGpeur/ha-chef-orchestre-energie/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "1.0.0"
+}

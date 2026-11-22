@@ -1,0 +1,197 @@
+"""Lecture des autres intégrations par leurs contrats publics (entités, services)."""
+
+from __future__ import annotations
+
+from datetime import datetime
+import logging
+from typing import Any
+
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
+from homeassistant.loader import async_get_integration
+from homeassistant.util import dt as dt_util
+
+from .const import BATTERY_DOMAIN, ENERGY_COUNTER_KEYS, SOLAR_DOMAINS, TARIFF_DOMAIN
+from .timeline import wh_hours_to_periods
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def find_entities(
+    hass: HomeAssistant,
+    platform: str,
+    keys: tuple[str, ...],
+    *,
+    device_id: str | None = None,
+    config_entry_id: str | None = None,
+) -> dict[str, str]:
+    """{translation_key: entity_id} pour un appareil ou une entrée de configuration."""
+    reg = er.async_get(hass)
+    if device_id:
+        entries = er.async_entries_for_device(reg, device_id)
+    elif config_entry_id:
+        entries = er.async_entries_for_config_entry(reg, config_entry_id)
+    else:
+        return {}
+    out: dict[str, str] = {}
+    for e in entries:
+        if e.platform == platform and e.translation_key in keys and e.disabled_by is None:
+            out.setdefault(e.translation_key, e.entity_id)
+    return out
+
+
+def battery_energy_counters(hass: HomeAssistant) -> dict[str, list[str]]:
+    """Compteurs d'énergie de toutes les batteries Zendure (pour la conso calculée)."""
+    reg = er.async_get(hass)
+    out: dict[str, list[str]] = {k: [] for k in ENERGY_COUNTER_KEYS}
+    for e in reg.entities.values():
+        if e.platform == BATTERY_DOMAIN and e.translation_key in ENERGY_COUNTER_KEYS:
+            if e.disabled_by is None:
+                out[e.translation_key].append(e.entity_id)
+    return out
+
+
+def counters_for_device(hass: HomeAssistant, device_id: str) -> dict[str, list[str]]:
+    """Compteurs d'énergie de la batterie pilotée, ou des membres d'un Groupe.
+
+    Un Groupe n'a pas forcément ses propres compteurs : on prend alors ceux de
+    toutes les batteries Zendure.
+    """
+    own = find_entities(hass, BATTERY_DOMAIN, ENERGY_COUNTER_KEYS, device_id=device_id)
+    if len(own) == len(ENERGY_COUNTER_KEYS):
+        return {k: [v] for k, v in own.items()}
+    return battery_energy_counters(hass)
+
+
+def state_float(hass: HomeAssistant, entity_id: str | None) -> float | None:
+    if not entity_id:
+        return None
+    st = hass.states.get(entity_id)
+    if st is None or st.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, ""):
+        return None
+    try:
+        return float(st.state)
+    except (TypeError, ValueError):
+        return None
+
+
+def state_str(hass: HomeAssistant, entity_id: str | None) -> str | None:
+    if not entity_id:
+        return None
+    st = hass.states.get(entity_id)
+    if st is None or st.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+        return None
+    return st.state
+
+
+async def async_integration_version(hass: HomeAssistant, domain: str) -> str | None:
+    try:
+        integration = await async_get_integration(hass, domain)
+    except Exception:  # noqa: BLE001 - intégration absente
+        return None
+    return str(integration.version) if integration.version else "0"
+
+
+def version_ok(found: str | None, minimum: str) -> bool:
+    if found is None:
+        return False
+    try:
+        from awesomeversion import AwesomeVersion
+
+        return AwesomeVersion(found) >= AwesomeVersion(minimum)
+    except Exception:  # noqa: BLE001
+        def parts(v: str) -> tuple[int, ...]:
+            return tuple(int(x) for x in v.split(".")[:3] if x.isdigit())
+
+        return parts(found) >= parts(minimum)
+
+
+async def async_tariff_forecast(hass: HomeAssistant, entry_id: str, hours: int) -> dict:
+    """Appelle tarifs_electricite.previsions (réponse uniquement)."""
+    return await hass.services.async_call(
+        TARIFF_DOMAIN,
+        "previsions",
+        {"config_entry_id": entry_id, "heures": min(72, max(1, hours))},
+        blocking=True,
+        return_response=True,
+    )
+
+
+def solar_entries(hass: HomeAssistant) -> list[tuple[str, str]]:
+    """(entry_id, titre) des prévisions solaires installées."""
+    out = []
+    for domain in SOLAR_DOMAINS:
+        for entry in hass.config_entries.async_entries(domain):
+            out.append((entry.entry_id, f"{entry.title} ({domain})"))
+    return out
+
+
+async def async_solar_periods(
+    hass: HomeAssistant, entry_ids: list[str]
+) -> tuple[list[tuple[datetime, datetime, float]], int]:
+    """Prévision de production de toutes les entrées, via la plateforme `energy`.
+
+    C'est la même source que le tableau Énergie : une entrée par champ de
+    panneaux, additionnées. Retourne (périodes, nombre d'entrées lues).
+    """
+    periods: list[tuple[datetime, datetime, float]] = []
+    read = 0
+    for entry_id in entry_ids:
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None or entry.state is not ConfigEntryState.LOADED:
+            continue
+        try:
+            integration = await async_get_integration(hass, entry.domain)
+            platform = await integration.async_get_platform("energy")
+            forecast = await platform.async_get_solar_forecast(hass, entry_id)
+        except Exception as err:  # noqa: BLE001 - une prévision défaillante n'arrête pas les autres
+            _LOGGER.debug("Prévision solaire %s illisible : %s", entry_id, err)
+            continue
+        wh = (forecast or {}).get("wh_hours") or {}
+        if wh:
+            periods += wh_hours_to_periods(wh)
+            read += 1
+    return periods, read
+
+
+async def async_hourly_sums(
+    hass: HomeAssistant, statistic_ids: list[str], start: datetime, end: datetime
+) -> dict[str, list[tuple[datetime, float]]]:
+    """Totaux cumulés horaires (statistiques long terme) : {id: [(début d'heure, somme)]}."""
+    ids = [i for i in statistic_ids if i]
+    if not ids:
+        return {}
+    try:
+        from homeassistant.components.recorder import get_instance
+        from homeassistant.components.recorder.statistics import statistics_during_period
+    except ImportError:  # pragma: no cover - recorder absent
+        return {}
+    try:
+        stats = await get_instance(hass).async_add_executor_job(
+            statistics_during_period, hass, start, end, set(ids), "hour", None, {"sum"}
+        )
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Lecture des statistiques impossible : %s", err)
+        return {}
+    out: dict[str, list[tuple[datetime, float]]] = {}
+    for sid, rows in stats.items():
+        pts = []
+        for row in rows:
+            ts = row.get("start")
+            if isinstance(ts, (int, float)):
+                ts = dt_util.utc_from_timestamp(ts)
+            if ts is None or row.get("sum") is None:
+                continue
+            pts.append((dt_util.as_local(ts), float(row["sum"])))
+        out[sid] = pts
+    return out
+
+
+def tariff_grid(hass: HomeAssistant, prix_actuel: str | None) -> Any:
+    """Attribut `grille` de prix_actuel (hors contrat, lu au mieux pour l'hypothèse Tempo)."""
+    if not prix_actuel:
+        return None
+    st = hass.states.get(prix_actuel)
+    return st.attributes.get("grille") if st else None

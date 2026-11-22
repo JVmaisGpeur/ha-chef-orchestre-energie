@@ -1,0 +1,29 @@
+recalculate:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: chef_orchestre_energie
+
+force_night:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: chef_orchestre_energie
+    mode:
+      required: true
+      selector:
+        select:
+          options:
+            - "charge"
+            - "idle"
+    target_soc:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"

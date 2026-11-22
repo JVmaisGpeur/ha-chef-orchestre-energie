@@ -1,0 +1,36 @@
+{
+  "entity": {
+    "sensor": {
+      "night_plan": {
+        "default": "mdi:battery-clock",
+        "state": {
+          "charge": "mdi:battery-charging-high",
+          "idle": "mdi:battery-heart-variant",
+          "not_profitable": "mdi:cash-remove",
+          "nothing_to_cover": "mdi:battery-check",
+          "suspended": "mdi:pause-circle-outline",
+          "missing_data": "mdi:alert-circle-outline"
+        }
+      },
+      "energy_to_charge": { "default": "mdi:battery-arrow-up" },
+      "target_soc": { "default": "mdi:battery-high" },
+      "charge_start": { "default": "mdi:clock-start" },
+      "forecast_consumption": { "default": "mdi:home-lightning-bolt-outline" },
+      "peak_need": { "default": "mdi:transmission-tower-import" },
+      "forecast_solar": { "default": "mdi:solar-power-variant" },
+      "forecast_gain": { "default": "mdi:cash-plus" },
+      "monthly_savings": { "default": "mdi:piggy-bank-outline" },
+      "measured_efficiency": { "default": "mdi:percent-circle-outline" },
+      "forecast_reliability": { "default": "mdi:chart-bell-curve" }
+    },
+    "switch": { "auto_control": { "default": "mdi:robot-outline" } },
+    "select": { "profile": { "default": "mdi:shield-half-full" } },
+    "number": { "gain_threshold": { "default": "mdi:cash-check" } },
+    "binary_sensor": { "power_alert": { "default": "mdi:flash-alert-outline" } },
+    "button": { "recalculate": { "default": "mdi:refresh" } }
+  },
+  "services": {
+    "recalculate": { "service": "mdi:refresh" },
+    "force_night": { "service": "mdi:weather-night" }
+  }
+}

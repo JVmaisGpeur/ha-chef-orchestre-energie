@@ -1,0 +1,398 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sources",
+        "description": "Requires ha-tarifs-electricite ≥ {tariff_min} and ha-zendure-solarflow-local ≥ {battery_min}. Forecast.Solar creates one entry per panel orientation: tick them all.",
+        "data": {
+          "tariff_entry_id": "Electricity tariff contract",
+          "battery_device_id": "Battery or battery Group to drive",
+          "solar_entry_ids": "Solar forecasts to add up (one per panel array)"
+        }
+      },
+      "consumption": {
+        "title": "House consumption",
+        "description": "Without a house sensor, consumption is computed as grid import − export + solar production + battery discharge − battery charge. The daily average is only used until 7 days of history are learned.",
+        "data": {
+          "house_energy_sensor": "House consumption energy sensor",
+          "grid_import_sensor": "Grid import energy (if no house sensor)",
+          "grid_export_sensor": "Grid export energy",
+          "solar_actual_sensor": "Actual solar production energy",
+          "daily_kwh": "Average daily consumption (first days)"
+        }
+      },
+      "economy": {
+        "title": "Economics",
+        "data": {
+          "efficiency": "Battery round-trip efficiency",
+          "wear": "Battery wear per kWh delivered",
+          "gain_threshold": "Profitability threshold",
+          "profile": "Caution profile"
+        },
+        "data_description": {
+          "efficiency": "85 % by default, then learned over 30 days from the battery energy counters.",
+          "wear": "Battery price ÷ (capacity × announced cycles). 0 to ignore.",
+          "gain_threshold": "A night grid charge only happens if each kWh returned earns at least this much (0.02 by default).",
+          "profile": "Safety margin added to the peak-hour need: cautious 20 %, balanced 10 %, economical 0 %."
+        }
+      },
+      "power": {
+        "title": "Power",
+        "data": {
+          "subscribed_kva": "Subscribed power (only if missing in Tarifs Électricité)",
+          "three_phase": "Three-phase installation",
+          "margin": "Margin under the subscribed power"
+        },
+        "data_description": {
+          "subscribed_kva": "Read from ha-tarifs-electricite when it is set there.",
+          "three_phase": "The limit becomes subscribed power ÷ 3 on the battery's phase; the grid sensor must measure that phase.",
+          "margin": "10 % minimum: the regulation can exceed the limit for 2 to 5 s when a large appliance starts."
+        }
+      }
+    },
+    "error": {
+      "tariff_version": "ha-tarifs-electricite {tariff_min} or newer is required.",
+      "battery_version": "ha-zendure-solarflow-local {battery_min} or newer is required.",
+      "no_solar_selected": "Select at least one solar forecast."
+    },
+    "abort": {
+      "already_configured": "Already configured.",
+      "missing_tariff": "Install and configure ha-tarifs-electricite first: {tariff_url}",
+      "missing_battery": "Install and configure ha-zendure-solarflow-local first: {battery_url}",
+      "missing_solar": "Install a solar forecast first (Forecast.Solar, Open-Meteo Solar Forecast or Solcast): {solar_url}"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Settings",
+        "menu_options": {
+          "economy": "Economics",
+          "power": "Power",
+          "consumption": "House consumption",
+          "sources": "Sources",
+          "loads": "Large appliances",
+          "notifications": "Notifications",
+          "advanced": "Advanced"
+        }
+      },
+      "economy": {
+        "title": "Economics",
+        "data": {
+          "efficiency": "Battery round-trip efficiency",
+          "wear": "Battery wear per kWh delivered",
+          "gain_threshold": "Profitability threshold",
+          "profile": "Caution profile"
+        },
+        "data_description": {
+          "efficiency": "85 % by default, then learned over 30 days from the battery energy counters.",
+          "wear": "Battery price ÷ (capacity × announced cycles). 0 to ignore.",
+          "gain_threshold": "A night grid charge only happens if each kWh returned earns at least this much (0.02 by default).",
+          "profile": "Safety margin added to the peak-hour need: cautious 20 %, balanced 10 %, economical 0 %."
+        }
+      },
+      "power": {
+        "title": "Power",
+        "data": {
+          "subscribed_kva": "Subscribed power (only if missing in Tarifs Électricité)",
+          "three_phase": "Three-phase installation",
+          "margin": "Margin under the subscribed power"
+        },
+        "data_description": {
+          "subscribed_kva": "Read from ha-tarifs-electricite when it is set there.",
+          "three_phase": "The limit becomes subscribed power ÷ 3 on the battery's phase; the grid sensor must measure that phase.",
+          "margin": "10 % minimum: the regulation can exceed the limit for 2 to 5 s when a large appliance starts."
+        }
+      },
+      "consumption": {
+        "title": "House consumption",
+        "description": "Without a house sensor, consumption is computed as grid import − export + solar production + battery discharge − battery charge. The daily average is only used until 7 days of history are learned.",
+        "data": {
+          "house_energy_sensor": "House consumption energy sensor",
+          "grid_import_sensor": "Grid import energy (if no house sensor)",
+          "grid_export_sensor": "Grid export energy",
+          "solar_actual_sensor": "Actual solar production energy",
+          "daily_kwh": "Average daily consumption (first days)"
+        }
+      },
+      "sources": {
+        "title": "Sources",
+        "description": "Requires ha-tarifs-electricite ≥ {tariff_min} and ha-zendure-solarflow-local ≥ {battery_min}. Forecast.Solar creates one entry per panel orientation: tick them all.",
+        "data": {
+          "tariff_entry_id": "Electricity tariff contract",
+          "battery_device_id": "Battery or battery Group to drive",
+          "solar_entry_ids": "Solar forecasts to add up (one per panel array)"
+        }
+      },
+      "notifications": {
+        "title": "Notifications",
+        "data": {
+          "notify_service": "Notification service",
+          "notify_level": "Messages to send"
+        }
+      },
+      "advanced": {
+        "title": "Advanced",
+        "data": {
+          "history_weeks": "Weeks of history learned",
+          "solar_correction": "Learn a solar correction factor",
+          "tempo_assumption": "Assumed Tempo colour while tomorrow's is unknown",
+          "finish_advance": "Finish charging before the end of off-peak hours by"
+        },
+        "data_description": {
+          "solar_correction": "Needs the actual solar production sensor (Consumption)."
+        }
+      },
+      "loads": {
+        "title": "Large appliances",
+        "description": "Water heater, heat pump, EV… They are never switched; they are used to plan the charging power and to warn you.",
+        "menu_options": {
+          "load_add": "Add",
+          "load_pick_edit": "Edit",
+          "load_pick_remove": "Remove"
+        }
+      },
+      "load_pick_edit": {
+        "title": "Edit an appliance",
+        "data": {
+          "load": "Appliance"
+        }
+      },
+      "load_pick_remove": {
+        "title": "Remove an appliance",
+        "data": {
+          "load": "Appliance"
+        }
+      },
+      "load_edit": {
+        "title": "Large appliance",
+        "data": {
+          "name": "Name",
+          "kind": "Type",
+          "power_w": "Rated power",
+          "power_sensor": "Power sensor (running detection)",
+          "threshold_w": "Running above",
+          "state_entity": "On/off entity (running detection)",
+          "energy_sensor": "Energy sensor (removed from the house profile)",
+          "usual_window": "Usual time window"
+        },
+        "data_description": {
+          "usual_window": "Format 23:00-02:00. Leave empty if unknown."
+        }
+      }
+    },
+    "error": {
+      "tariff_version": "ha-tarifs-electricite {tariff_min} or newer is required.",
+      "battery_version": "ha-zendure-solarflow-local {battery_min} or newer is required.",
+      "no_solar_selected": "Select at least one solar forecast.",
+      "bad_window": "Expected format: 23:00-02:00"
+    }
+  },
+  "selector": {
+    "profile": {
+      "options": {
+        "cautious": "Cautious (+20 %)",
+        "balanced": "Balanced (+10 %)",
+        "economical": "Economical (+0 %)"
+      }
+    },
+    "notify_level": {
+      "options": {
+        "all": "Evening plan and alerts",
+        "alerts": "Alerts only",
+        "none": "None"
+      }
+    },
+    "tempo_assumption": {
+      "options": {
+        "bleu": "Blue",
+        "blanc": "White",
+        "rouge": "Red"
+      }
+    },
+    "load_kind": {
+      "options": {
+        "water_heater": "Water heater",
+        "heat_pump": "Heat pump",
+        "ev": "Electric vehicle",
+        "other": "Other"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "night_plan": {
+        "name": "Night plan",
+        "state": {
+          "charge": "Charge",
+          "idle": "Rest",
+          "not_profitable": "Not profitable",
+          "nothing_to_cover": "Nothing to cover",
+          "suspended": "Suspended",
+          "missing_data": "Missing data"
+        },
+        "state_attributes": {
+          "reason": {
+            "name": "Reason",
+            "state": {
+              "charge_needed": "Charge needed to cover tomorrow's peak hours",
+              "enough_energy": "The battery already holds enough energy",
+              "solar_covers": "The sun will cover the need",
+              "gain_too_low": "Price gap too small to be worth the losses",
+              "no_peak_hours": "No peak hours to cover",
+              "no_off_peak": "No off-peak hours ahead",
+              "capacity_short": "Battery too small: energy kept for the most expensive hours",
+              "forced_charge": "Charge forced for tonight",
+              "forced_idle": "Rest forced for tonight",
+              "missing_data": "Data missing: no command sent"
+            }
+          }
+        }
+      },
+      "energy_to_charge": {
+        "name": "Energy to charge"
+      },
+      "target_soc": {
+        "name": "Target state of charge"
+      },
+      "charge_start": {
+        "name": "Charge start"
+      },
+      "forecast_consumption": {
+        "name": "Forecast consumption"
+      },
+      "peak_need": {
+        "name": "Peak-hour need"
+      },
+      "forecast_solar": {
+        "name": "Forecast solar production"
+      },
+      "forecast_gain": {
+        "name": "Forecast gain"
+      },
+      "monthly_savings": {
+        "name": "Savings this month"
+      },
+      "measured_efficiency": {
+        "name": "Battery efficiency"
+      },
+      "forecast_reliability": {
+        "name": "Forecast reliability",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "good": "Good"
+        }
+      }
+    },
+    "switch": {
+      "auto_control": {
+        "name": "Automatic control"
+      }
+    },
+    "select": {
+      "profile": {
+        "name": "Caution profile",
+        "state": {
+          "cautious": "Cautious",
+          "balanced": "Balanced",
+          "economical": "Economical"
+        }
+      }
+    },
+    "number": {
+      "gain_threshold": {
+        "name": "Profitability threshold"
+      }
+    },
+    "binary_sensor": {
+      "power_alert": {
+        "name": "Power alert"
+      }
+    },
+    "button": {
+      "recalculate": {
+        "name": "Recalculate"
+      }
+    }
+  },
+  "issues": {
+    "integration_version": {
+      "title": "{name} too old or missing",
+      "description": "The Energy conductor needs {name} {minimum} or newer (found: {found}). Control is suspended until it is updated."
+    },
+    "missing_entities": {
+      "title": "Required entities not found",
+      "description": "These entities could not be found: {keys}. Check that they are enabled, or choose the sources again in the options. Control is suspended."
+    },
+    "subscribed_power_missing": {
+      "title": "Subscribed power not set",
+      "description": "Set it in Tarifs Électricité (Configure) or in the Power options of the Energy conductor. Without it, no charging can be planned safely."
+    },
+    "no_solar_forecast": {
+      "title": "No solar forecast for 24 h",
+      "description": "None of the selected solar forecasts answered for 24 hours. Plans are computed without sun."
+    },
+    "member_battery": {
+      "title": "The selected battery belongs to a Group",
+      "description": "Select the Group instead of the battery in the Sources options: a member battery is driven by its Group."
+    },
+    "battery_degraded": {
+      "title": "Battery Group degraded",
+      "description": "At least one battery of the Group is out of the distribution. Plans continue with the others."
+    }
+  },
+  "exceptions": {
+    "no_orchestrator": {
+      "message": "No Energy conductor is configured."
+    },
+    "notify_title": {
+      "message": "Energy conductor"
+    },
+    "notify_plan_charge": {
+      "message": "Tonight: charging {energy} up to {soc} %, starting {start}. Estimated gain {gain}."
+    },
+    "notify_plan_idle": {
+      "message": "Tonight: no charging, the battery has enough energy."
+    },
+    "notify_plan_not_profitable": {
+      "message": "Tonight: no charging, the price gap does not cover the battery losses."
+    },
+    "notify_power_alert": {
+      "message": "Risk of exceeding the subscribed power tonight (limit {limit}): check the large appliances."
+    },
+    "notify_charge_unfinished": {
+      "message": "Tonight's charge stopped at {soc} % instead of {target} %."
+    }
+  },
+  "services": {
+    "recalculate": {
+      "name": "Recalculate",
+      "description": "Recomputes the plan now.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Instance",
+          "description": "Leave empty for all."
+        }
+      }
+    },
+    "force_night": {
+      "name": "Force tonight",
+      "description": "Imposes a charge or a rest for the current night; automatic control resumes the next day.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Instance",
+          "description": "Leave empty for all."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "charge or idle."
+        },
+        "target_soc": {
+          "name": "Target state of charge",
+          "description": "For a charge; maximum SOC if empty."
+        }
+      }
+    }
+  }
+}
