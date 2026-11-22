@@ -69,6 +69,20 @@ Pendant la charge, la limite de soutirage vaut `puissance souscrite × (1 − ma
 
 Services : `chef_orchestre_energie.recalculate` et `chef_orchestre_energie.force_night` (charge ou repos imposé pour la nuit en cours ; le pilotage reprend le lendemain).
 
+## Carte Lovelace
+
+La carte est livrée avec l'intégration et se charge toute seule : Modifier le tableau de bord → Ajouter une carte → « Chef d'orchestre énergie ».
+
+```yaml
+type: custom:chef-orchestre-card
+name: Batteries            # facultatif
+show_chart: true           # graphique des 48 h à venir
+show_modes: true           # frise des modes prévus
+show_settings: true        # réglages rapides
+```
+
+Elle montre le plan de la nuit et sa raison, les chiffres clés (énergie à charger, SOC cible, heure de début, gain prévu, économies du mois), le SOC simulé et les prix sur 48 h avec les heures creuses, la frise des modes, les alertes, et les réglages rapides (profil de prudence, seuil de rentabilité, recalcul). Elle suit la langue et le thème de Home Assistant.
+
 ## Gros consommateurs
 
 Chauffe-eau, PAC, VE… déclarés dans les options avec leur puissance, et si possible un capteur de puissance ou une entité marche/arrêt, un capteur d'énergie et une plage habituelle (`23:00-02:00`). Ils ne sont **jamais coupés** : ils servent à avancer l'heure de début de charge, et à vous prévenir s'ils risquent de dépasser la puissance souscrite.

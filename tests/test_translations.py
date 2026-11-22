@@ -71,3 +71,21 @@ def test_pas_de_texte_francais_dans_le_code_affiche():
         text = path.read_text(encoding="utf-8")
         for m in re.finditer(r'raise \w+\(\s*"', text):
             raise AssertionError(f"message codé en dur dans {path.name}")
+
+
+def test_carte_coherente():
+    """La carte connaît tous les états du plan et les deux langues ont les mêmes textes."""
+    import sys
+
+    sys.path.insert(0, str(BASE.parent.parent / "tests"))
+    from conftest import planner
+
+    js = (BASE / "frontend" / "chef-orchestre-card.js").read_text(encoding="utf-8")
+    colors = set(re.findall(r"(\w+): \"#", js.split("const PLAN_COLORS")[1].split("};")[0]))
+    assert colors == set(planner.PLAN_STATES)
+    for mode in (planner.MODE_OFF, planner.MODE_GRID_CHARGE, planner.MODE_SMART, planner.MODE_SMART_CHARGE):
+        assert js.count(f"{mode}:") >= 3, mode  # couleur + nom en français + nom en anglais
+    fr = js.split("  fr: {")[1].split("\n  en: {")[0]
+    en = js.split("\n  en: {")[1].split("\n};")[0]
+    key = re.compile(r"(?:^|[{,])\s*(\w+):", re.M)
+    assert set(key.findall(fr)) == set(key.findall(en))

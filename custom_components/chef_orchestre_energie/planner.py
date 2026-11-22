@@ -128,6 +128,7 @@ class StepPlan:
     charge_kwh: float = 0.0  # énergie prise au réseau pour la batterie
     discharge_kwh: float = 0.0  # énergie fournie à la maison par la batterie
     profitable: bool = False
+    off_peak: bool = False
 
 
 @dataclass
@@ -437,6 +438,7 @@ def _build_steps(plan, steps, worth, reserve, cover, ws, we, b, s, step_h) -> li
                 charge_kwh=round(charge, 4),
                 discharge_kwh=round(delivered, 4),
                 profitable=worth[k],
+                off_peak=st.off_peak,
             )
         )
     return out
@@ -448,7 +450,9 @@ def _modes_without_window(steps, b, s, step_h) -> list[StepPlan]:
     for st in steps:
         mode = MODE_SMART
         out.append(
-            StepPlan(st.start, mode, b.soc, st.price, st.consumption_kwh, st.solar_kwh)
+            StepPlan(
+                st.start, mode, b.soc, st.price, st.consumption_kwh, st.solar_kwh, off_peak=st.off_peak
+            )
         )
     return out
 

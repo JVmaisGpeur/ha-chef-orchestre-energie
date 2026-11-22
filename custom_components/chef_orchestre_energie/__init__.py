@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import voluptuous as vol
 
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN, PLATFORMS, SERVICE_FORCE_NIGHT, SERVICE_RECALCULATE
 from .manager import Orchestrator
@@ -24,6 +29,9 @@ SCHEMA_FORCE_NIGHT = vol.Schema(
 )
 
 type ChefConfigEntry = ConfigEntry[Orchestrator]
+
+CARD_URL = f"/{DOMAIN}/chef-orchestre-card.js"
+CARD_FILE = Path(__file__).parent / "frontend" / "chef-orchestre-card.js"
 
 
 def _targets(hass: HomeAssistant, call: ServiceCall) -> list[Orchestrator]:
@@ -42,6 +50,13 @@ def _targets(hass: HomeAssistant, call: ServiceCall) -> list[Orchestrator]:
 
 
 async def async_setup(hass: HomeAssistant, config) -> bool:
+    # Carte Lovelace servie et chargée automatiquement ; ?v= force le rechargement après mise à jour
+    integration = await async_get_integration(hass, DOMAIN)
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(CARD_URL, str(CARD_FILE), cache_headers=False)]
+    )
+    add_extra_js_url(hass, f"{CARD_URL}?v={integration.version}")
+
     async def _recalculate(call: ServiceCall) -> None:
         for orch in _targets(hass, call):
             await orch.async_check_sources()

@@ -137,6 +137,7 @@ class ChefSensor(ChefEntity, SensorEntity):
                         "price": sp.price,
                         "consumption": round(sp.consumption_kwh, 3),
                         "solar": round(sp.solar_kwh, 3),
+                        "off_peak": sp.off_peak,
                     }
                     for sp in plan.steps
                 ],

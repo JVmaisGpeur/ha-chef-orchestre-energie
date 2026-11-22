@@ -69,6 +69,20 @@ While charging, the import limit is `subscribed power × (1 − margin)`, with a
 
 Services: `chef_orchestre_energie.recalculate` and `chef_orchestre_energie.force_night` (charge or rest imposed for the current night; automatic control resumes the next day).
 
+## Lovelace card
+
+The card ships with the integration and loads by itself: Edit dashboard → Add card → "Chef d'orchestre énergie".
+
+```yaml
+type: custom:chef-orchestre-card
+name: Batteries            # optional
+show_chart: true           # next 48 h chart
+show_modes: true           # planned mode strip
+show_settings: true        # quick settings
+```
+
+It shows tonight's plan and its reason, the key figures (energy to charge, target SOC, start time, forecast gain, monthly savings), the simulated SOC and prices over 48 h with off-peak hours, the mode strip, the alerts, and quick settings (caution profile, profitability threshold, recalculate). It follows the Home Assistant language and theme.
+
 ## Large appliances
 
 Water heater, heat pump, EV… declared in the options with their power and, if possible, a power sensor or on/off entity, an energy sensor and a usual time window (`23:00-02:00`). They are **never switched off**: they are used to bring the charge start forward and to warn you if they may exceed the subscribed power.
