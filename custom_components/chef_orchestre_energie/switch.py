@@ -24,6 +24,11 @@ class AutoControlSwitch(ChefEntity, SwitchEntity):
     def is_on(self) -> bool:
         return self.orch.auto_control
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Contrat d'interface (E1) : ce que le Chef d'orchestre pilote."""
+        return self.orch.interface_attributes
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self.orch.async_set_auto_control(True)
 

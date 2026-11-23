@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -87,6 +87,13 @@ SENSORS: tuple[ChefSensorDescription, ...] = (
         value_fn=lambda o, p: round(o.efficiency_used * 100, 1),
     ),
     ChefSensorDescription(
+        key="board_power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda o, p: None if o.board_power_w is None else round(o.board_power_w),
+    ),
+    ChefSensorDescription(
         key="forecast_reliability",
         device_class=SensorDeviceClass.ENUM,
         options=RELIABILITIES,
@@ -125,6 +132,21 @@ class ChefSensor(ChefEntity, SensorEntity):
             return {
                 "reason": plan.reason,
                 "missing": self.orch.missing,
+                "price_gap": plan.price_gap,
+                "charge_end": plan.charge_end.isoformat() if plan.charge_end else None,
+                "reserve_soc": plan.reserve_soc,
+                "user_min_soc": self.orch.user_soc.get("min"),
+                "user_max_soc": self.orch.user_soc.get("max"),
+                "applied_min_soc": plan.reserve_soc if plan.reserve_soc is not None else self.orch.user_soc.get("min"),
+                "applied_max_soc": 100 if self.orch.full_charge else self.orch.user_soc.get("max"),
+                "full_charge": self.orch.full_charge,
+                "gain_threshold": self.orch.gain_threshold,
+                "efficiency": round(self.orch.efficiency_used, 3),
+                "tariff_ok": self.orch.tariff_ok,
+                "tariff_entity": self.orch.tariff_entities.get("prix_actuel"),
+                "battery_ok": self.orch.sources_ok,
+                "reserve_available": self.orch.e2_ok,
+                "consumption_source": self.orch.consumption_source,
                 "window_start": plan.window_start.isoformat() if plan.window_start else None,
                 "window_end": plan.window_end.isoformat() if plan.window_end else None,
                 "capacity_short": plan.capacity_short,
@@ -142,6 +164,20 @@ class ChefSensor(ChefEntity, SensorEntity):
                     }
                     for sp in plan.steps
                 ],
+            }
+        if key == "board_power":
+            kva = self.orch.subscribed_kva
+            p = self.orch.board_power_w
+            limit = kva * 1000 if kva else None
+            return {
+                "subscribed_kva": kva,
+                "limit_w": limit,
+                "margin_w": None if limit is None or p is None else round(limit - p),
+                "percent": None if not limit or p is None else round(p / limit * 100, 1),
+                "power_entity": self.orch.cfg.get("power_sensor"),
+                "loads": self.orch.running_loads(),
+                "gauge_warn": self.orch.cfg.get("gauge_warn", 80),
+                "gauge_crit": self.orch.cfg.get("gauge_crit", 95),
             }
         if key == "measured_efficiency":
             return {"measured": self.orch.measured_efficiency is not None}

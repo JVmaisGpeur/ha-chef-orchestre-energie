@@ -8,7 +8,7 @@
  *   show_modes: true       # frise des modes prévus
  *   show_settings: true    # réglages rapides
  */
-const CARD_VERSION = "1.1.2";
+const CARD_VERSION = "1.2.0";
 const DOMAIN = "chef_orchestre_energie";
 
 const I18N = {
@@ -27,7 +27,7 @@ const I18N = {
       suspended: "Pilotage suspendu : aucune commande n'est envoyée à la batterie.",
       missing: "Données manquantes : aucune commande n'est envoyée. Consulte Paramètres → Réparations.",
     },
-    missingItems: { sources: "intégrations ou entités introuvables", tariff_forecast: "prévisions tarifaires",
+    missingItems: { sources: "intégrations ou entités introuvables", tariff: "Tarifs électricité absente (prix et heures creuses)", solar_forecast: "prévision solaire indisponible", tariff_forecast: "prévisions tarifaires",
       battery_state: "état de la batterie (capacité, SOC)", subscribed_power: "puissance souscrite",
       off_peak_price: "prix des heures creuses", error: "erreur de calcul (voir les journaux)" },
     modeNames: { off: "Arrêt", grid_charge: "Charge réseau", smart: "Couplage intelligent", smart_charge: "Réserve (stocke le solaire)" },
@@ -49,7 +49,7 @@ const I18N = {
       suspended: "Control suspended: no command is sent to the battery.",
       missing: "Data missing: no command is sent. See Settings → Repairs.",
     },
-    missingItems: { sources: "integrations or entities not found", tariff_forecast: "tariff forecast",
+    missingItems: { sources: "integrations or entities not found", tariff: "Electricity Tariffs missing (prices and off-peak hours)", solar_forecast: "solar forecast unavailable", tariff_forecast: "tariff forecast",
       battery_state: "battery state (capacity, SOC)", subscribed_power: "subscribed power",
       off_peak_price: "off-peak price", error: "calculation error (see the logs)" },
     modeNames: { off: "Off", grid_charge: "Grid charge", smart: "Smart matching", smart_charge: "Reserve (stores solar)" },

@@ -1,4 +1,4 @@
-"""Assistant d'installation (4 écrans) et options."""
+"""Assistant d'installation unique (6 écrans, E4) et options."""
 
 from __future__ import annotations
 
@@ -14,10 +14,13 @@ from . import sources as src
 from .const import (
     BATTERY_DOMAIN,
     BATTERY_MIN_VERSION,
+    CONF_AUTO_START,
     CONF_BATTERY_DEVICE,
     CONF_DAILY_KWH,
     CONF_EFFICIENCY,
     CONF_FINISH_ADVANCE,
+    CONF_GAUGE_CRIT,
+    CONF_GAUGE_WARN,
     CONF_GAIN_THRESHOLD,
     CONF_GRID_EXPORT,
     CONF_GRID_IMPORT,
@@ -27,7 +30,9 @@ from .const import (
     CONF_MARGIN,
     CONF_NOTIFY_LEVEL,
     CONF_NOTIFY_SERVICE,
+    CONF_POWER_SENSOR,
     CONF_PROFILE,
+    CONF_RESERVE_SOC,
     CONF_SOLAR_ACTUAL,
     CONF_SOLAR_CORRECTION,
     CONF_SOLAR_ENTRIES,
@@ -54,7 +59,6 @@ from .const import (
     TARIFF_MIN_VERSION,
     TEMPO_COLORS,
 )
-from .timeline import parse_window
 
 URL_TARIFF = "https://github.com/JVmaisGpeur/ha-tarifs-electricite"
 URL_BATTERY = "https://github.com/JVmaisGpeur/ha-zendure-solarflow-local"
@@ -133,22 +137,38 @@ def _default(cur: dict, key: str, options: list[tuple[str, str]]):
     return values[0] if len(values) == 1 else vol.UNDEFINED
 
 
-def _sources_schema(hass, cur: dict) -> vol.Schema:
+def _sources_schema(hass, cur: dict, only_multiple: bool = False) -> vol.Schema:
+    """Choix des sources. Dans l'assistant, seules les listes à plusieurs choix sont montrées."""
     solar = src.solar_entries(hass)
     tariffs = _tariff_options(hass)
     batteries = _battery_options(hass)
     solar_ids = [e for e, _ in solar]
-    solar_default = [e for e in cur.get(CONF_SOLAR_ENTRIES, solar_ids) if e in solar_ids] or solar_ids
-    return vol.Schema(
-        {
-            vol.Required(CONF_TARIFF_ENTRY, default=_default(cur, CONF_TARIFF_ENTRY, tariffs)): _list(tariffs),
-            vol.Required(CONF_BATTERY_DEVICE, default=_default(cur, CONF_BATTERY_DEVICE, batteries)): _list(batteries),
-            vol.Required(CONF_SOLAR_ENTRIES, default=solar_default): _list(solar, multiple=True),
-        }
-    )
+    solar_default = [e for e in cur.get(CONF_SOLAR_ENTRIES) or solar_ids if e in solar_ids] or solar_ids
+    fields: dict = {}
+    if tariffs and (len(tariffs) > 1 or not only_multiple):
+        fields[vol.Optional(CONF_TARIFF_ENTRY, default=_default(cur, CONF_TARIFF_ENTRY, tariffs))] = _list(tariffs)
+    if len(batteries) > 1 or not only_multiple:
+        fields[vol.Required(CONF_BATTERY_DEVICE, default=_default(cur, CONF_BATTERY_DEVICE, batteries))] = _list(batteries)
+    if len(solar) > 1 or not only_multiple:
+        fields[vol.Required(CONF_SOLAR_ENTRIES, default=solar_default)] = _list(solar, multiple=True)
+    return vol.Schema(fields)
+
+
+def _auto_sources(hass) -> dict[str, Any]:
+    """Sources uniques choisies d'office (E4 : pas de question inutile)."""
+    out: dict[str, Any] = {}
+    tariffs = _tariff_options(hass)
+    batteries = _battery_options(hass)
+    solar = src.solar_entries(hass)
+    out[CONF_TARIFF_ENTRY] = tariffs[0][0] if len(tariffs) == 1 else None
+    if len(batteries) == 1:
+        out[CONF_BATTERY_DEVICE] = batteries[0][0]
+    out[CONF_SOLAR_ENTRIES] = [e for e, _ in solar]
+    return out
 
 
 def _consumption_schema(cur: dict) -> vol.Schema:
+    """Réglage manuel facultatif : par défaut, la consommation vient du tableau Énergie."""
     return vol.Schema(
         {
             _opt(CONF_HOUSE_SENSOR, cur): ENERGY_SENSOR,
@@ -160,14 +180,23 @@ def _consumption_schema(cur: dict) -> vol.Schema:
     )
 
 
-def _economy_schema(cur: dict) -> vol.Schema:
+def _profit_schema(cur: dict) -> vol.Schema:
+    """Écran Rentabilité de l'assistant."""
     return vol.Schema(
         {
-            vol.Required(CONF_EFFICIENCY, default=cur.get(CONF_EFFICIENCY, DEFAULTS[CONF_EFFICIENCY])): _num(50, 100, 1, "%"),
-            vol.Required(CONF_WEAR, default=cur.get(CONF_WEAR, DEFAULTS[CONF_WEAR])): _num(0, 1, 0.005, "EUR/kWh"),
             vol.Required(
                 CONF_GAIN_THRESHOLD, default=cur.get(CONF_GAIN_THRESHOLD, DEFAULTS[CONF_GAIN_THRESHOLD])
             ): _num(0, 1, 0.005, "EUR/kWh"),
+            vol.Required(CONF_EFFICIENCY, default=cur.get(CONF_EFFICIENCY, DEFAULTS[CONF_EFFICIENCY])): _num(50, 100, 1, "%"),
+            vol.Required(CONF_RESERVE_SOC, default=cur.get(CONF_RESERVE_SOC, DEFAULTS[CONF_RESERVE_SOC])): _num(0, 50, 5, "%"),
+        }
+    )
+
+
+def _economy_schema(cur: dict) -> vol.Schema:
+    return _profit_schema(cur).extend(
+        {
+            vol.Required(CONF_WEAR, default=cur.get(CONF_WEAR, DEFAULTS[CONF_WEAR])): _num(0, 1, 0.005, "EUR/kWh"),
             vol.Required(CONF_PROFILE, default=cur.get(CONF_PROFILE, DEFAULTS[CONF_PROFILE])): _choice(
                 list(PROFILES), "profile"
             ),
@@ -175,9 +204,17 @@ def _economy_schema(cur: dict) -> vol.Schema:
     )
 
 
+def _measure_schema(cur: dict) -> vol.Schema:
+    """Écran Mesure de puissance de l'assistant."""
+    return vol.Schema({_opt(CONF_POWER_SENSOR, cur): POWER_SENSOR})
+
+
 def _power_schema(cur: dict) -> vol.Schema:
     return vol.Schema(
         {
+            _opt(CONF_POWER_SENSOR, cur): POWER_SENSOR,
+            vol.Required(CONF_GAUGE_WARN, default=cur.get(CONF_GAUGE_WARN, DEFAULTS[CONF_GAUGE_WARN])): _num(50, 100, 1, "%"),
+            vol.Required(CONF_GAUGE_CRIT, default=cur.get(CONF_GAUGE_CRIT, DEFAULTS[CONF_GAUGE_CRIT])): _num(50, 100, 1, "%"),
             _opt(CONF_SUBSCRIBED_KVA, cur): _num(1, 36, 1, "kVA"),
             vol.Required(CONF_THREE_PHASE, default=cur.get(CONF_THREE_PHASE, False)): selector.BooleanSelector(),
             vol.Required(CONF_MARGIN, default=cur.get(CONF_MARGIN, DEFAULTS[CONF_MARGIN])): _num(MIN_MARGIN, 50, 1, "%"),
@@ -185,13 +222,44 @@ def _power_schema(cur: dict) -> vol.Schema:
     )
 
 
-async def _check_versions(hass) -> dict[str, str]:
-    errors: dict[str, str] = {}
-    if not src.version_ok(await src.async_integration_version(hass, TARIFF_DOMAIN), TARIFF_MIN_VERSION):
-        errors[CONF_TARIFF_ENTRY] = "tariff_version"
-    if not src.version_ok(await src.async_integration_version(hass, BATTERY_DOMAIN), BATTERY_MIN_VERSION):
-        errors[CONF_BATTERY_DEVICE] = "battery_version"
-    return errors
+def _gauge_errors(user_input: dict) -> dict[str, str]:
+    if user_input.get(CONF_GAUGE_WARN, 0) >= user_input.get(CONF_GAUGE_CRIT, 100):
+        return {CONF_GAUGE_CRIT: "gauge_order"}
+    return {}
+
+
+def _load_schema(cur: dict, with_more: bool = False) -> vol.Schema:
+    """Gros consommateur : nom, type, puissance en kW, capteur de détection facultatif."""
+    power_kw = cur.get(LOAD_POWER)
+    fields = {
+        vol.Required(LOAD_NAME, default=cur.get(LOAD_NAME, vol.UNDEFINED)): selector.TextSelector(),
+        vol.Required(LOAD_KIND, default=cur.get(LOAD_KIND, "water_heater")): _choice(LOAD_KINDS, "load_kind"),
+        vol.Required("power_kw", default=round(power_kw / 1000, 2) if power_kw else 3.0): _num(0.1, 22, 0.1, "kW"),
+        _opt(LOAD_POWER_SENSOR, cur): POWER_SENSOR,
+        _opt(LOAD_STATE_ENTITY, cur): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain=["switch", "binary_sensor", "input_boolean"])
+        ),
+    }
+    if with_more:
+        fields[vol.Required("add_another", default=False)] = selector.BooleanSelector()
+    return vol.Schema(fields)
+
+
+def _load_from_input(user_input: dict, previous: dict | None = None) -> dict:
+    load = dict(previous or {})
+    load.update(
+        {
+            LOAD_NAME: user_input[LOAD_NAME].strip(),
+            LOAD_KIND: user_input.get(LOAD_KIND, "other"),
+            LOAD_POWER: round(float(user_input["power_kw"]) * 1000),
+            LOAD_POWER_SENSOR: user_input.get(LOAD_POWER_SENSOR) or None,
+            LOAD_STATE_ENTITY: user_input.get(LOAD_STATE_ENTITY) or None,
+        }
+    )
+    load.setdefault(LOAD_THRESHOLD, 100)
+    load.setdefault(LOAD_ENERGY_SENSOR, None)
+    load.setdefault(LOAD_WINDOW, None)
+    return load
 
 
 def _placeholders() -> dict[str, str]:
@@ -204,6 +272,27 @@ def _placeholders() -> dict[str, str]:
     }
 
 
+def _mark(found: str | None, minimum: str | None) -> str:
+    if found is None:
+        return "❌"
+    if minimum and not src.version_ok(found, minimum):
+        return f"⚠️ {found}"
+    return f"✅ {found}"
+
+
+async def _detection(hass) -> dict[str, str]:
+    """Intégrations trouvées et leurs versions, pour l'écran Détection."""
+    tariff = await src.async_integration_version(hass, TARIFF_DOMAIN) if hass.config_entries.async_entries(TARIFF_DOMAIN) else None
+    battery = await src.async_integration_version(hass, BATTERY_DOMAIN) if hass.config_entries.async_entries(BATTERY_DOMAIN) else None
+    solar = src.solar_entries(hass)
+    return {
+        **_placeholders(),
+        "tariff_found": _mark(tariff, TARIFF_MIN_VERSION),
+        "battery_found": _mark(battery, BATTERY_MIN_VERSION),
+        "solar_found": ("✅ " + ", ".join(t for _, t in solar)) if solar else "❌",
+    }
+
+
 def _clean(user_input: dict, keys=OPTIONAL_ENTITIES) -> dict:
     """Un champ facultatif vidé revient à None."""
     out = dict(user_input)
@@ -213,52 +302,122 @@ def _clean(user_input: dict, keys=OPTIONAL_ENTITIES) -> dict:
 
 
 class ChefConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Assistant unique : détection, sources, rentabilité, gros consommateurs, mesure, récapitulatif.
+
+    Rien n'est demandé de ce que les autres intégrations savent déjà : puissance souscrite,
+    offre, prix, heures creuses, modes et SOC de la batterie.
+    """
+
     VERSION = 1
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
+        self._loads: list[dict] = []
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """1. Détection."""
         await self.async_set_unique_id(DOMAIN)
         self._abort_if_unique_id_configured()
         hass = self.hass
-        if not hass.config_entries.async_entries(TARIFF_DOMAIN):
-            return self.async_abort(reason="missing_tariff", description_placeholders=_placeholders())
+        placeholders = await _detection(hass)
         if not hass.config_entries.async_entries(BATTERY_DOMAIN):
-            return self.async_abort(reason="missing_battery", description_placeholders=_placeholders())
+            return self.async_abort(reason="missing_battery", description_placeholders=placeholders)
         if not src.solar_entries(hass):
-            return self.async_abort(reason="missing_solar", description_placeholders=_placeholders())
-        errors = await _check_versions(hass)
+            return self.async_abort(reason="missing_solar", description_placeholders=placeholders)
+        errors: dict[str, str] = {}
+        if not src.version_ok(await src.async_integration_version(hass, BATTERY_DOMAIN), BATTERY_MIN_VERSION):
+            errors["base"] = "battery_version"
         if user_input is not None and not errors:
-            if not user_input.get(CONF_SOLAR_ENTRIES):
-                errors[CONF_SOLAR_ENTRIES] = "no_solar_selected"
-            else:
-                self._data.update(user_input)
-                return await self.async_step_consumption()
+            self._data.update(_auto_sources(hass))
+            return await self.async_step_sources()
         return self.async_show_form(
-            step_id="user",
-            data_schema=_sources_schema(hass, user_input or {}),
-            errors=errors,
-            description_placeholders=_placeholders(),
+            step_id="user", data_schema=vol.Schema({}), errors=errors, description_placeholders=placeholders
         )
 
-    async def async_step_consumption(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_sources(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """2. Sources : seulement s'il y a plusieurs choix."""
+        schema = _sources_schema(self.hass, self._data, only_multiple=True)
+        errors: dict[str, str] = {}
+        if not schema.schema:
+            return await self.async_step_profit()
         if user_input is not None:
-            self._data.update(_clean(user_input, OPTIONAL_ENTITIES[:4]))
-            return await self.async_step_economy()
-        return self.async_show_form(step_id="consumption", data_schema=_consumption_schema({}))
+            if CONF_SOLAR_ENTRIES in schema.schema and not user_input.get(CONF_SOLAR_ENTRIES):
+                errors[CONF_SOLAR_ENTRIES] = "no_solar_selected"
+            if not errors:
+                self._data.update(user_input)
+                return await self.async_step_profit()
+        return self.async_show_form(
+            step_id="sources", data_schema=schema, errors=errors, description_placeholders=_placeholders()
+        )
 
-    async def async_step_economy(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_profit(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """3. Rentabilité."""
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_power()
-        return self.async_show_form(step_id="economy", data_schema=_economy_schema({}))
+            return await self.async_step_loads()
+        return self.async_show_form(step_id="profit", data_schema=_profit_schema(self._data))
 
-    async def async_step_power(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_loads(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """4. Gros consommateurs (facultatif, un par écran)."""
+        return self.async_show_menu(step_id="loads", menu_options=["load_new", "measure"])
+
+    async def async_step_load_new(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            self._data.update(_clean(user_input, (CONF_SUBSCRIBED_KVA,)))
-            return self.async_create_entry(title="Chef d'orchestre énergie", data=self._data)
-        return self.async_show_form(step_id="power", data_schema=_power_schema({}))
+            self._loads.append(_load_from_input(user_input))
+            if user_input.get("add_another"):
+                return self.async_show_form(
+                    step_id="load_new",
+                    data_schema=_load_schema({}, with_more=True),
+                    description_placeholders={"count": str(len(self._loads))},
+                )
+            return await self.async_step_measure()
+        return self.async_show_form(
+            step_id="load_new",
+            data_schema=_load_schema({}, with_more=True),
+            description_placeholders={"count": str(len(self._loads))},
+        )
+
+    async def async_step_measure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """5. Mesure de puissance au tableau (facultatif)."""
+        if user_input is not None:
+            self._data[CONF_POWER_SENSOR] = user_input.get(CONF_POWER_SENSOR) or None
+            return await self.async_step_recap()
+        return self.async_show_form(step_id="measure", data_schema=_measure_schema(self._data))
+
+    def _recap_placeholders(self) -> dict[str, str]:
+        tariffs = dict(_tariff_options(self.hass))
+        batteries = dict(_battery_options(self.hass))
+        solar = dict(src.solar_entries(self.hass))
+        d = self._data
+        loads = ", ".join(f"{l[LOAD_NAME]} ({l[LOAD_POWER] / 1000:g} kW)" for l in self._loads)
+        return {
+            "tariff": tariffs.get(d.get(CONF_TARIFF_ENTRY) or "", "—"),
+            "battery": batteries.get(d.get(CONF_BATTERY_DEVICE) or "", "—"),
+            "solar": ", ".join(solar.get(e, e) for e in d.get(CONF_SOLAR_ENTRIES) or []) or "—",
+            "threshold": f"{float(d.get(CONF_GAIN_THRESHOLD, DEFAULTS[CONF_GAIN_THRESHOLD])):.3f}",
+            "efficiency": f"{float(d.get(CONF_EFFICIENCY, DEFAULTS[CONF_EFFICIENCY])):g}",
+            "reserve": f"{float(d.get(CONF_RESERVE_SOC, DEFAULTS[CONF_RESERVE_SOC])):g}",
+            "loads": loads or "—",
+            "power_sensor": d.get(CONF_POWER_SENSOR) or "—",
+        }
+
+    async def async_step_recap(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """6. Récapitulatif et activation du pilotage."""
+        if user_input is not None:
+            data = {**self._data, CONF_AUTO_START: bool(user_input.get(CONF_AUTO_START, True))}
+            data[CONF_LOADS] = self._loads
+            data.setdefault(CONF_DAILY_KWH, DEFAULTS[CONF_DAILY_KWH])
+            data.setdefault(CONF_WEAR, DEFAULTS[CONF_WEAR])
+            data.setdefault(CONF_PROFILE, DEFAULTS[CONF_PROFILE])
+            data.setdefault(CONF_THREE_PHASE, DEFAULTS[CONF_THREE_PHASE])
+            data.setdefault(CONF_MARGIN, DEFAULTS[CONF_MARGIN])
+            for key in OPTIONAL_ENTITIES:
+                data.setdefault(key, None)
+            return self.async_create_entry(title="Chef d'orchestre énergie", data=data)
+        schema = vol.Schema({vol.Required(CONF_AUTO_START, default=True): selector.BooleanSelector()})
+        return self.async_show_form(
+            step_id="recap", data_schema=schema, description_placeholders=self._recap_placeholders()
+        )
 
     @staticmethod
     @callback
@@ -282,7 +441,7 @@ class ChefOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=["economy", "power", "consumption", "sources", "loads", "notifications", "advanced"],
+            menu_options=["economy", "power", "loads", "sources", "consumption", "notifications", "advanced"],
         )
 
     async def async_step_economy(self, user_input=None) -> ConfigFlowResult:
@@ -291,9 +450,14 @@ class ChefOptionsFlow(OptionsFlow):
         return self.async_show_form(step_id="economy", data_schema=_economy_schema(self._cur))
 
     async def async_step_power(self, user_input=None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self._save(_clean(user_input, (CONF_SUBSCRIBED_KVA,)))
-        return self.async_show_form(step_id="power", data_schema=_power_schema(self._cur))
+            errors = _gauge_errors(user_input)
+            if not errors:
+                return self._save(_clean(user_input, (CONF_SUBSCRIBED_KVA, CONF_POWER_SENSOR)))
+        return self.async_show_form(
+            step_id="power", data_schema=_power_schema(user_input or self._cur), errors=errors
+        )
 
     async def async_step_consumption(self, user_input=None) -> ConfigFlowResult:
         if user_input is not None:
@@ -301,12 +465,20 @@ class ChefOptionsFlow(OptionsFlow):
         return self.async_show_form(step_id="consumption", data_schema=_consumption_schema(self._cur))
 
     async def async_step_sources(self, user_input=None) -> ConfigFlowResult:
-        errors = await _check_versions(self.hass)
-        if user_input is not None and not errors:
+        errors: dict[str, str] = {}
+        if user_input is not None:
             if not user_input.get(CONF_SOLAR_ENTRIES):
                 errors[CONF_SOLAR_ENTRIES] = "no_solar_selected"
+            elif user_input.get(CONF_TARIFF_ENTRY) and not src.version_ok(
+                await src.async_integration_version(self.hass, TARIFF_DOMAIN), TARIFF_MIN_VERSION
+            ):
+                errors[CONF_TARIFF_ENTRY] = "tariff_version"
+            elif not src.version_ok(
+                await src.async_integration_version(self.hass, BATTERY_DOMAIN), BATTERY_MIN_VERSION
+            ):
+                errors[CONF_BATTERY_DEVICE] = "battery_version"
             else:
-                return self._save(user_input)
+                return self._save(_clean(user_input, (CONF_TARIFF_ENTRY,)))
         return self.async_show_form(
             step_id="sources",
             data_schema=_sources_schema(self.hass, self._cur),
@@ -391,32 +563,13 @@ class ChefOptionsFlow(OptionsFlow):
         return await self.async_step_load_edit(user_input)
 
     async def async_step_load_edit(self, user_input=None) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
         loads = self._loads
         cur = loads[self._load_index] if self._load_index is not None else {}
         if user_input is not None:
-            if user_input.get(LOAD_WINDOW) and parse_window(user_input[LOAD_WINDOW]) is None:
-                errors[LOAD_WINDOW] = "bad_window"
+            load = _load_from_input(user_input, cur)
+            if self._load_index is None:
+                loads.append(load)
             else:
-                load = _clean(user_input, (LOAD_POWER_SENSOR, LOAD_STATE_ENTITY, LOAD_ENERGY_SENSOR, LOAD_WINDOW))
-                if self._load_index is None:
-                    loads.append(load)
-                else:
-                    loads[self._load_index] = load
-                return self._save({CONF_LOADS: loads})
-        schema = vol.Schema(
-            {
-                vol.Required(LOAD_NAME, default=cur.get(LOAD_NAME, vol.UNDEFINED)): selector.TextSelector(),
-                vol.Required(LOAD_KIND, default=cur.get(LOAD_KIND, "water_heater")): _choice(LOAD_KINDS, "load_kind"),
-                vol.Required(LOAD_POWER, default=cur.get(LOAD_POWER, 3000)): _num(100, 22000, 50, "W"),
-                _opt(LOAD_POWER_SENSOR, cur): POWER_SENSOR,
-                vol.Required(LOAD_THRESHOLD, default=cur.get(LOAD_THRESHOLD, 100)): _num(5, 5000, 5, "W"),
-                _opt(LOAD_STATE_ENTITY, cur): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain=["switch", "binary_sensor", "input_boolean"])
-                ),
-                _opt(LOAD_ENERGY_SENSOR, cur): ENERGY_SENSOR,
-                _opt(LOAD_WINDOW, cur): selector.TextSelector(),
-            }
-        )
-        step = "load_edit"
-        return self.async_show_form(step_id=step, data_schema=schema, errors=errors)
+                loads[self._load_index] = load
+            return self._save({CONF_LOADS: loads})
+        return self.async_show_form(step_id="load_edit", data_schema=_load_schema(cur))

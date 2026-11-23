@@ -30,8 +30,9 @@ SCHEMA_FORCE_NIGHT = vol.Schema(
 
 type ChefConfigEntry = ConfigEntry[Orchestrator]
 
-CARD_URL = f"/{DOMAIN}/chef-orchestre-card.js"
-CARD_FILE = Path(__file__).parent / "frontend" / "chef-orchestre-card.js"
+FRONTEND = Path(__file__).parent / "frontend"
+# Carte détaillée du plan (D7) et carte Énergie (E3)
+CARDS = ("chef-orchestre-card.js", "chef-orchestre-energie-card.js")
 
 
 def _targets(hass: HomeAssistant, call: ServiceCall) -> list[Orchestrator]:
@@ -53,9 +54,10 @@ async def async_setup(hass: HomeAssistant, config) -> bool:
     # Carte Lovelace servie et chargée automatiquement ; ?v= force le rechargement après mise à jour
     integration = await async_get_integration(hass, DOMAIN)
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(CARD_URL, str(CARD_FILE), cache_headers=False)]
+        [StaticPathConfig(f"/{DOMAIN}/{name}", str(FRONTEND / name), cache_headers=False) for name in CARDS]
     )
-    add_extra_js_url(hass, f"{CARD_URL}?v={integration.version}")
+    for name in CARDS:
+        add_extra_js_url(hass, f"/{DOMAIN}/{name}?v={integration.version}")
 
     async def _recalculate(call: ServiceCall) -> None:
         for orch in _targets(hass, call):

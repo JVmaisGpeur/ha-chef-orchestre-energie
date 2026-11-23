@@ -207,3 +207,58 @@ def test_gain_positif_quand_rentable():
 )
 def test_limite_de_soutirage(kva, margin, tri, expected):
     assert P.import_limit_w(kva, margin, tri) == expected
+
+
+# ---------------------------------------------------------------- E2 (v1.2.0)
+def test_reserve_si_non_rentable():
+    steps = build(hp=0.25, hc=0.21)
+    plan = P.compute_plan_with_reserve(steps, bat(soc=80), P.Settings(), reserve_soc=50)
+    assert plan.state == P.PLAN_NOT_PROFITABLE
+    assert plan.reserve_soc == 50 and plan.soc_min == 50
+    # la batterie ne descend jamais sous la réserve
+    assert min(sp.soc for sp in plan.steps) >= 50 - 1e-6
+
+
+def test_reserve_ignoree_si_rentable():
+    plan = P.compute_plan_with_reserve(build(), bat(soc=80, cap=20), P.Settings(), reserve_soc=50)
+    assert plan.state in (P.PLAN_CHARGE, P.PLAN_IDLE)
+    assert plan.reserve_soc is None and plan.soc_min == 10
+
+
+def test_reserve_sous_le_soc_actuel():
+    # SOC déjà sous la réserve : plus de décharge, mais le solaire est stocké
+    steps = build(hp=0.25, hc=0.21, solar_kw=lambda t: sunny(t) / 2)
+    plan = P.compute_plan_with_reserve(steps, bat(soc=30), P.Settings(), reserve_soc=50)
+    assert plan.reserve_soc == 50
+    socs = [sp.soc for sp in plan.steps]
+    # tant que la batterie est sous la réserve, elle ne décharge pas
+    first_above = next(i for i, v in enumerate(socs) if v > 50)
+    assert all(sp.discharge_kwh == 0 for sp in plan.steps[:first_above])
+    # une fois remontée, elle ne redescend jamais sous la réserve
+    assert min(socs[first_above:]) >= 50 - 1e-6
+
+
+def test_soc_max_100_si_le_soleil_deborde():
+    steps = build(cons_kw=0.3, solar_kw=sunny)
+    b = bat(soc=70, cap=10, soc_max=90)
+    plan = P.compute_plan(steps, b, P.Settings())
+    assert P.daylight_overflow(plan) >= 0.2
+    assert P.wants_full_charge(plan)
+    # peu de soleil : pas de passage à 100 %
+    small = P.compute_plan(build(cons_kw=0.6, solar_kw=lambda t: sunny(t) / 8), b, P.Settings())
+    assert not P.wants_full_charge(small)
+
+
+def test_charge_reseau_plafonnee_au_max_utilisateur():
+    b = P.Battery(10, 10, 10, 100, 2400, 2400, grid_soc_max=90)
+    plan = P.compute_plan(build(cons_kw=1.5), b, P.Settings())
+    assert plan.state == P.PLAN_CHARGE
+    assert plan.target_soc <= 90
+    night = [sp for sp in plan.steps if plan.window_start <= sp.start < plan.window_end]
+    assert max(sp.soc for sp in night) <= 90 + 1e-6
+
+
+def test_ecart_de_prix_et_fin_de_charge():
+    plan = P.compute_plan(build(), bat(cap=20), P.Settings())
+    assert abs(plan.price_gap - (0.30 - 0.20 / 0.85)) < 1e-3
+    assert plan.charge_start < plan.charge_end <= plan.window_end

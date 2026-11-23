@@ -16,10 +16,11 @@ Chaque soir, elle répond à trois questions :
 
 | Intégration | Version | Rôle |
 | --- | --- | --- |
-| [ha-tarifs-electricite](https://github.com/JVmaisGpeur/ha-tarifs-electricite) | ≥ 1.1.0 | Prix, heures creuses, Tempo, puissance souscrite |
+| [ha-tarifs-electricite](https://github.com/JVmaisGpeur/ha-tarifs-electricite) | ≥ 1.1.0, recommandée | Prix, heures creuses, Tempo, puissance souscrite. Sans elle, le Chef d'orchestre s'installe mais ne pilote pas |
 | [ha-zendure-solarflow-local](https://github.com/JVmaisGpeur/ha-zendure-solarflow-local) | ≥ 1.3.0 | Batterie ou Groupe de batteries à piloter |
 | Une prévision solaire | – | Forecast.Solar, Open-Meteo Solar Forecast ou Solcast |
-| Un compteur d'énergie (recommandé) | – | Pour apprendre la consommation de la maison |
+| Le tableau Énergie de Home Assistant (recommandé) | – | La consommation de la maison y est apprise sans rien saisir |
+| Un capteur de puissance au tableau (facultatif) | – | Par exemple Shelly Pro 3EM, pour la jauge de la carte Énergie |
 
 Avec Forecast.Solar, ajoutez une entrée par orientation de panneaux : le Chef d'orchestre les additionne heure par heure, comme le tableau Énergie.
 
@@ -31,7 +32,16 @@ Une batterie ne doit être pilotée que par une seule intégration ou automatisa
 2. Installez « Chef d'orchestre énergie », redémarrez Home Assistant.
 3. Paramètres → Appareils et services → Ajouter une intégration → Chef d'orchestre énergie.
 
-L'assistant tient en quatre écrans : sources, consommation, économie, puissance. Tout se modifie ensuite dans **Configurer** : économie, puissance, consommation, sources, gros consommateurs, notifications, avancé.
+L'assistant détecte seul les autres intégrations et ne redemande rien de ce qu'elles savent déjà (puissance souscrite, offre, prix, heures creuses, modes et SOC de la batterie) :
+
+1. **Détection** : intégrations trouvées et leurs versions ; Zendure et une prévision solaire sont obligatoires, Tarifs est recommandée ;
+2. **Sources** : seulement s'il y a plusieurs choix (deux contrats, plusieurs batteries, plusieurs champs de panneaux) ;
+3. **Rentabilité** : seuil (0,02 €/kWh), rendement (85 %), réserve si non rentable (50 %) ;
+4. **Gros consommateurs** : nom, puissance en kW, capteur de détection facultatif ;
+5. **Mesure de puissance** : capteur de puissance au tableau, facultatif ;
+6. **Récapitulatif**, avec l'activation du pilotage.
+
+La consommation de la maison est lue dans le tableau Énergie de Home Assistant. Tout se modifie ensuite dans **Configurer** : économie, puissance (capteur, seuils de la jauge, marge, triphasé), gros consommateurs, sources, consommation (réglage manuel si vous n'utilisez pas le tableau Énergie), notifications, avancé.
 
 ## Comment il décide
 
@@ -50,6 +60,14 @@ Avant chaque début d'heures creuses (et dès qu'une donnée change), il simule 
 | Heures pleines réservées pour plus tard | `smart_charge` |
 | Pilotage coupé ou données manquantes | aucune commande |
 
+### SOC minimum et maximum (réserve)
+
+- **Nuit non rentable** : le SOC minimum de chaque batterie passe à la **réserve** (50 % par défaut, entité « Réserve si non rentable ») si son propre réglage est plus bas. La batterie garde ainsi son énergie au lieu de la dépenser à perte.
+- **Nuit rentable** : chaque batterie retrouve son SOC minimum à sa valeur exacte.
+- **Soleil abondant** : si la prévision solaire dépasse ce que la batterie peut stocker sous votre SOC maximum, le SOC maximum passe à 100 % pour la journée, puis revient à votre valeur au début des heures creuses suivantes. La charge réseau ne dépasse jamais votre maximum.
+- Vos valeurs sont mémorisées par le Chef d'orchestre et restituées quand le pilotage est coupé, au redémarrage et à la suppression de l'intégration. Si vous changez un SOC pendant la réserve, la nouvelle valeur est retenue.
+- Ces réglages sont écrits dans la mémoire de la batterie : au plus une écriture toutes les 30 minutes, sauf pour rendre vos valeurs.
+
 Pendant la charge, la limite de soutirage vaut `puissance souscrite × (1 − marge)`, avec une marge d'au moins 10 % (÷ 3 en triphasé). La batterie la respecte en temps réel : si le four ou le chauffe-eau démarre, elle réduit sa charge aussitôt.
 
 ## Entités
@@ -59,6 +77,8 @@ Pendant la charge, la limite de soutirage vaut `puissance souscrite × (1 − ma
 | Pilotage automatique | Coupé, plus aucune commande n'est envoyée |
 | Profil de prudence | Prudent, équilibré, économe |
 | Seuil de rentabilité | €/kWh, modifiable à chaud |
+| Réserve si non rentable | SOC minimum appliqué les nuits non rentables (0 à 50 %) |
+| Puissance au tableau | Puissance appelée, avec la puissance souscrite, la marge et l'état des gros consommateurs en attributs |
 | Plan de la nuit | Charge, repos, non rentable, rien à couvrir, suspendu, données manquantes ; attributs `reason` et `hourly_plan` |
 | Énergie à charger, SOC cible, Début de charge | Le plan de la nuit |
 | Consommation prévue, Besoin en heures pleines, Production solaire prévue | Les prévisions utilisées |
@@ -69,7 +89,32 @@ Pendant la charge, la limite de soutirage vaut `puissance souscrite × (1 − ma
 
 Services : `chef_orchestre_energie.recalculate` et `chef_orchestre_energie.force_night` (charge ou repos imposé pour la nuit en cours ; le pilotage reprend le lendemain).
 
-## Carte Lovelace
+## Carte Énergie
+
+Vue d'ensemble livrée avec l'intégration et chargée toute seule. Une ligne suffit :
+
+```yaml
+type: custom:chef-orchestre-energie-card
+show_tariff: true      # tarif en cours
+show_batteries: true   # batteries
+show_plan: true        # plan pour demain
+show_power: true       # puissance au tableau
+gauge_warn: 80         # jauge orange (% de la puissance souscrite)
+gauge_crit: 95         # jauge rouge
+```
+
+Les blocs sont masqués par défaut, comme dans la carte Tarifs ; l'éditeur visuel les coche pour vous.
+
+- **En-tête** : interrupteur « Pilotage actif / coupé ».
+- **Tarif en cours** : période, prix, prochain changement, prix de l'autre période ; bouton vers la carte Tarifs électricité.
+- **Batteries** : SOC du groupe, puissance, mode (« Piloté par le Chef d'orchestre » ou « Réglé dans la carte Zendure »), et pour chaque batterie son SOC, sa puissance, ses SOC min et max ; bouton vers la carte Zendure.
+- **Plan pour demain** : rentable, non rentable ou en pause, solaire prévu, consommation estimée, énergie à charger, écart de prix face au seuil, créneau de charge, SOC minimum appliqué ; bouton vers la carte détaillée ci-dessous.
+- **Puissance au tableau** : jauge face à la puissance souscrite, marge avant disjonction, gros consommateurs.
+- **Pied** : accès aux réglages du Chef d'orchestre.
+
+Les boutons ouvrent les autres cartes dans une pop-up. La carte Énergie ne modifie ni le tarif ni les réglages des batteries. Un bloc sans source affiche un message à sa place.
+
+## Carte détaillée du plan
 
 La carte est livrée avec l'intégration et se charge toute seule : Modifier le tableau de bord → Ajouter une carte → « Chef d'orchestre énergie ».
 
@@ -85,13 +130,13 @@ Elle montre le plan de la nuit et sa raison, les chiffres clés (énergie à cha
 
 ## Gros consommateurs
 
-Chauffe-eau, PAC, VE… déclarés dans les options avec leur puissance, et si possible un capteur de puissance ou une entité marche/arrêt, un capteur d'énergie et une plage habituelle (`23:00-02:00`). Ils ne sont **jamais coupés** : ils servent à avancer l'heure de début de charge, et à vous prévenir s'ils risquent de dépasser la puissance souscrite.
+Chauffe-eau, PAC, VE… déclarés dans les options avec leur puissance, et si possible un capteur de puissance ou une entité marche/arrêt, un capteur d'énergie et une plage habituelle (`23:00-02:00`). Ils ne sont **jamais coupés** : ils servent à avancer l'heure de début de charge, et à vous prévenir s'ils risquent de dépasser la puissance souscrite. La puissance se saisit en kW.
 
 ## Notifications
 
 Choisissez un service `notify.*` et le niveau : plan du soir et alertes, alertes uniquement, ou aucune. Les messages suivent la langue de Home Assistant.
 
-## Limites connues (v1.0.0)
+## Limites connues
 
 - Un jour spécial non confirmé (`jour_special_confirme: false`) est calculé avec le prix d'un jour normal, puis recalculé dès la confirmation (le plan est relancé toutes les 15 minutes).
 - Une couleur Tempo inconnue prend la couleur supposée dans les options (blanc par défaut), puis le plan est recalculé à l'annonce.
@@ -99,10 +144,25 @@ Choisissez un service `notify.*` et le niveau : plan du soir et alertes, alertes
 
 ## Interface pour les autres intégrations
 
+### Ce que le Chef d'orchestre expose
+
+L'interrupteur **Pilotage automatique** (`switch`, `translation_key: auto_control`) est l'entité stable à détecter. Ses attributs :
+
+| Attribut | Contenu |
+| --- | --- |
+| `controlled_device_id` | Appareil piloté (batterie ou Groupe) |
+| `controlled_device_ids` | Appareil piloté et chaque batterie membre |
+| `controlled_entities` | Entités que le Chef d'orchestre commande : mode, limite de soutirage, SOC cible, et SOC min/max de chaque batterie |
+| `interface_version` | `1` |
+
+Quand le pilotage est actif, il se déclare aussi auprès de ha-zendure-solarflow-local (≥ 1.4.0) par le service `zendure_local.set_external_control` (`device_id`, `active`, `controller`, `controlled_keys`), à l'activation puis toutes les 15 minutes, et retire sa déclaration quand le pilotage est coupé. Sans renouvellement pendant 30 minutes, la carte Zendure réaffiche seule tous ses réglages. Avec une version plus ancienne de Zendure, rien n'est déclaré et le reste fonctionne.
+
+### Ce qu'il lit
+
 Le Chef d'orchestre ne lit les autres intégrations que par leurs contrats publics :
 
 - ha-tarifs-electricite (clés en français) : service `tarifs_electricite.previsions`, capteurs `puissance_souscrite`, `offre`, `prix_actuel`, `tempo_demain` ;
-- ha-zendure-solarflow-local (clés en anglais) : `operating_mode`, `import_limit`, `charge_target_soc`, `electric_level`, `usable_capacity`, `available_energy`, `missing_energy`, `battery_power`, `max_charge_power`, `max_discharge_power`, `regulation_state`.
+- ha-zendure-solarflow-local (clés en anglais) : `operating_mode`, `import_limit`, `charge_target_soc`, `electric_level`, `usable_capacity`, `available_energy`, `missing_energy`, `battery_power`, `max_charge_power`, `max_discharge_power`, `regulation_state`, et par batterie `min_soc` et `soc_set` (sans eux, la réserve est désactivée avec une alerte dans Réparations).
 
 Les clés techniques du Chef d'orchestre (entités, valeurs, attributs, services) sont en anglais ; les noms affichés sont traduits.
 

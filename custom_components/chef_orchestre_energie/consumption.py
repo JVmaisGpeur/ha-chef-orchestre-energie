@@ -176,3 +176,33 @@ ENERGY_FACTORS = {"wh": 0.001, "kwh": 1.0, "mwh": 1000.0, "gwh": 1_000_000.0}
 def energy_factor(unit: str | None) -> float:
     """Facteur pour convertir une énergie en kWh (Enphase compte en MWh, d'autres en Wh)."""
     return ENERGY_FACTORS.get((unit or "kWh").strip().lower(), 1.0)
+
+
+def energy_dashboard_stats(prefs: dict | None) -> dict[str, list[str]]:
+    """Compteurs déclarés dans le tableau Énergie (D10).
+
+    Accepte l'ancien format (grid → flow_from/flow_to) et le format à plat.
+    Retourne {"import": [...], "export": [...], "solar": [...], "charge": [...], "discharge": [...]}.
+    """
+    out: dict[str, list[str]] = {k: [] for k in ("import", "export", "solar", "charge", "discharge")}
+    for src_ in (prefs or {}).get("energy_sources") or []:
+        kind = src_.get("type")
+        if kind == "grid":
+            for f in src_.get("flow_from") or []:
+                if f.get("stat_energy_from"):
+                    out["import"].append(f["stat_energy_from"])
+            for f in src_.get("flow_to") or []:
+                if f.get("stat_energy_to"):
+                    out["export"].append(f["stat_energy_to"])
+            if src_.get("stat_energy_from"):
+                out["import"].append(src_["stat_energy_from"])
+            if src_.get("stat_energy_to"):
+                out["export"].append(src_["stat_energy_to"])
+        elif kind == "solar" and src_.get("stat_energy_from"):
+            out["solar"].append(src_["stat_energy_from"])
+        elif kind == "battery":
+            if src_.get("stat_energy_from"):
+                out["discharge"].append(src_["stat_energy_from"])
+            if src_.get("stat_energy_to"):
+                out["charge"].append(src_["stat_energy_to"])
+    return out

@@ -13,7 +13,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
-from .consumption import energy_factor
+from .consumption import energy_dashboard_stats, energy_factor  # noqa: F401
 from .const import BATTERY_DOMAIN, ENERGY_COUNTER_KEYS, SOLAR_DOMAINS, TARIFF_DOMAIN
 from .timeline import wh_hours_to_periods
 
@@ -41,6 +41,35 @@ def find_entities(
         if e.platform == platform and e.translation_key in keys and e.disabled_by is None:
             out.setdefault(e.translation_key, e.entity_id)
     return out
+
+
+def battery_units(hass: HomeAssistant, device_id: str) -> list[str]:
+    """Appareils des batteries réelles : la batterie elle-même, ou les membres d'un Groupe.
+
+    Zendure Local ≥ 1.4.0 expose `member_device_ids` ; en 1.3.x, le sélecteur de
+    mode du Groupe liste ses batteries (attribut `batteries`, par entrée).
+    """
+    from homeassistant.helpers import device_registry as dr
+
+    ents = find_entities(
+        hass, BATTERY_DOMAIN, ("operating_mode", "regulation_state"), device_id=device_id
+    )
+    for eid in ents.values():
+        st = hass.states.get(eid)
+        if st and isinstance(st.attributes.get("member_device_ids"), list):
+            return [d for d in st.attributes["member_device_ids"] if d] or [device_id]
+    st = hass.states.get(ents.get("operating_mode", ""))
+    batteries = st.attributes.get("batteries") if st else None
+    if isinstance(batteries, list) and batteries:
+        reg = dr.async_get(hass)
+        out: list[str] = []
+        for b in batteries:
+            entry_id = b.get("entry_id") if isinstance(b, dict) else None
+            if entry_id:
+                out += [d.id for d in dr.async_entries_for_config_entry(reg, entry_id)]
+        if out:
+            return out
+    return [device_id]
 
 
 def battery_energy_counters(hass: HomeAssistant) -> dict[str, list[str]]:
@@ -207,6 +236,28 @@ async def async_hourly_sums(
             pts.append((dt_util.as_local(ts), float(row["sum"]) * factor))
         out[sid] = pts
     return out
+
+
+async def async_energy_prefs(hass: HomeAssistant) -> dict | None:
+    """Configuration du tableau Énergie de Home Assistant, si elle existe."""
+    try:
+        from homeassistant.components.energy.data import async_get_manager
+
+        manager = await async_get_manager(hass)
+        return dict(manager.data) if manager.data else None
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Tableau Énergie illisible : %s", err)
+        return None
+
+
+def power_w(hass: HomeAssistant, entity_id: str | None) -> float | None:
+    """Puissance en W (convertit les kW)."""
+    v = state_float(hass, entity_id)
+    if v is None:
+        return None
+    st = hass.states.get(entity_id)
+    unit = (st.attributes.get("unit_of_measurement") or "W").lower() if st else "w"
+    return v * 1000 if unit == "kw" else v
 
 
 def tariff_grid(hass: HomeAssistant, prix_actuel: str | None) -> Any:

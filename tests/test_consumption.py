@@ -89,3 +89,17 @@ def test_unites_d_energie():
     assert C.energy_factor("Wh") == 0.001
     assert C.energy_factor("kWh") == 1
     assert C.energy_factor(None) == 1
+
+
+def test_tableau_energie():
+    ancien = {"energy_sources": [
+        {"type": "grid", "flow_from": [{"stat_energy_from": "sensor.import"}], "flow_to": [{"stat_energy_to": "sensor.export"}]},
+        {"type": "solar", "stat_energy_from": "sensor.prod"},
+        {"type": "battery", "stat_energy_from": "sensor.bat_out", "stat_energy_to": "sensor.bat_in"},
+    ]}
+    s = C.energy_dashboard_stats(ancien)
+    assert s == {"import": ["sensor.import"], "export": ["sensor.export"], "solar": ["sensor.prod"],
+                 "charge": ["sensor.bat_in"], "discharge": ["sensor.bat_out"]}
+    plat = {"energy_sources": [{"type": "grid", "stat_energy_from": "sensor.i", "stat_energy_to": "sensor.e"}]}
+    assert C.energy_dashboard_stats(plat)["import"] == ["sensor.i"]
+    assert C.energy_dashboard_stats(None)["solar"] == []

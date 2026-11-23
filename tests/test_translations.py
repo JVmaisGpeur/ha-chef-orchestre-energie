@@ -89,3 +89,62 @@ def test_carte_coherente():
     en = js.split("\n  en: {")[1].split("\n};")[0]
     key = re.compile(r"(?:^|[{,])\s*(\w+):", re.M)
     assert set(key.findall(fr)) == set(key.findall(en))
+
+
+def test_etapes_assistant_traduites():
+    """Chaque écran et chaque menu de config_flow.py a son titre dans les deux langues."""
+    import re
+
+    code = (BASE / "config_flow.py").read_text(encoding="utf-8")
+    flow, options = code.split("class ChefOptionsFlow")
+    for lang in ("fr", "en"):
+        d = json.loads((BASE / "translations" / f"{lang}.json").read_text(encoding="utf-8"))
+        for part, section in ((flow, "config"), (options, "options")):
+            for step in set(re.findall(r'step_id="([a-z_]+)"', part)):
+                assert step in d[section]["step"], (lang, section, step)
+            for menu in re.findall(r"menu_options=\[([^\]]+)\]", part):
+                for opt in re.findall(r'"([a-z_]+)"', menu):
+                    assert opt in d[section]["step"], (lang, section, opt)
+
+
+def test_placeholders_assistant():
+    """Les textes de l'assistant n'utilisent que les variables fournies par le code."""
+    import re
+
+    code = (BASE / "config_flow.py").read_text(encoding="utf-8")
+    provided = set(re.findall(r'"([a-z_]+)": ', code))
+    for lang in ("fr", "en"):
+        d = json.loads((BASE / "translations" / f"{lang}.json").read_text(encoding="utf-8"))
+        for step in d["config"]["step"].values():
+            for name in re.findall(r"{([a-z_]+)}", step.get("description", "")):
+                assert name in provided, (lang, name)
+
+
+def test_carte_energie_coherente():
+    """Carte Énergie (E3) : mêmes textes en français et en anglais, tous les états du plan, carte enregistrée."""
+    import sys
+
+    sys.path.insert(0, str(BASE.parent.parent / "tests"))
+    from conftest import planner
+
+    js = (BASE / "frontend" / "chef-orchestre-energie-card.js").read_text(encoding="utf-8")
+    fr = js.split("  fr: {")[1].split("\n  en: {")[0]
+    en = js.split("\n  en: {")[1].split("\n};")[0]
+    key = re.compile(r"(?:^|[{,])\s*(\w+):", re.M)
+    assert set(key.findall(fr)) == set(key.findall(en))
+    verdicts = set(re.findall(r"(\w+): \"", fr.split("verdict: {")[1].split("}")[0]))
+    assert set(planner.PLAN_STATES) <= verdicts
+    assert "chef-orchestre-energie-card.js" in (BASE / "__init__.py").read_text(encoding="utf-8")
+    # Blocs masqués par défaut, comme la carte Tarifs
+    assert "show_tariff: true" in js.split("getStubConfig")[1].split("}")[0]
+    assert "this._config = { ...(config || {}) }" in js
+
+
+def test_interface_stable():
+    """E1 : l'interrupteur auto_control porte les attributs d'interface."""
+    switch = (BASE / "switch.py").read_text(encoding="utf-8")
+    manager = (BASE / "manager.py").read_text(encoding="utf-8")
+    assert 'translation_key = "auto_control"' in switch or '"auto_control"' in switch
+    assert "interface_attributes" in switch
+    for attr in ("controlled_device_id", "controlled_device_ids", "controlled_entities", "interface_version"):
+        assert f'"{attr}"' in manager, attr

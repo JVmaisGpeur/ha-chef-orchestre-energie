@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from collections.abc import Callable
 from datetime import datetime, timedelta
 import logging
@@ -40,6 +41,11 @@ from .const import (
     CONF_NOTIFY_LEVEL,
     CONF_NOTIFY_SERVICE,
     CONF_PROFILE,
+    CONF_AUTO_START,
+    CONF_GAUGE_CRIT,
+    CONF_GAUGE_WARN,
+    CONF_POWER_SENSOR,
+    CONF_RESERVE_SOC,
     CONF_SOLAR_ACTUAL,
     CONF_SOLAR_CORRECTION,
     CONF_SOLAR_ENTRIES,
@@ -49,6 +55,12 @@ from .const import (
     CONF_THREE_PHASE,
     CONF_WEAR,
     CONTROL_INTERVAL_S,
+    CONTROLLER_NAME,
+    EXTERNAL_CONTROL_RENEW_MIN,
+    EXTERNAL_CONTROL_SERVICE,
+    INTERFACE_VERSION,
+    UNIT_SOC_BOUNDS,
+    UNIT_SOC_KEYS,
     DEFAULTS,
     DOMAIN,
     EFFICIENCY_DAYS,
@@ -65,6 +77,7 @@ from .const import (
     SOLAR_FACTOR_DAYS,
     STEP_MINUTES,
     STORE_VERSION,
+    TARIFF_CARD_KEYS,
     TARIFF_DOMAIN,
     TARIFF_KEYS,
     TARIFF_MIN_VERSION,
@@ -89,9 +102,11 @@ from .planner import (
     Plan,
     Settings,
     Step,
-    compute_plan,
+    compute_plan_with_reserve,
     import_limit_w,
+    wants_full_charge,
 )
+from .soc_keeper import SocKeeper, Target
 from .timeline import (
     at,
     fill_unknown_prices,
@@ -118,9 +133,21 @@ class Orchestrator:
         self.profile = ConsumptionProfile(float(self.cfg[CONF_DAILY_KWH]))
         self.plan: Plan | None = None
         # Réglages à chaud (entités), conservés au redémarrage
-        self.auto_control = True
+        self.auto_control = bool(self.cfg.get(CONF_AUTO_START, True))
         self.profile_name: str = self.cfg[CONF_PROFILE]
         self.gain_threshold: float = float(self.cfg[CONF_GAIN_THRESHOLD])
+        self.reserve_soc: float = float(self.cfg[CONF_RESERVE_SOC])
+        # SOC min / max de chaque batterie (E2)
+        self.keeper = SocKeeper()
+        self.units: list[str] = []  # appareils des batteries réelles
+        self.unit_soc: dict[str, dict[str, str]] = {}  # appareil → {min_soc, soc_set}
+        self.e2_ok = False
+        self.full_charge = False
+        self.user_soc: dict[str, float | None] = {"min": None, "max": None}
+        self._last_declare: datetime | None = None
+        self.tariff_ok = False
+        self.consumption_source = "none"
+        self._solar_actual_ids: list[str] = []
         # Appris
         self.efficiency: float = float(self.cfg[CONF_EFFICIENCY]) / 100
         self.measured_efficiency: float | None = None
@@ -168,6 +195,13 @@ class Orchestrator:
         watched = [w for w in watched if w]
         if watched:
             self._unsubs.append(async_track_state_change_event(hass, watched, self._on_change))
+        # Puissance au tableau : affichage en direct, sans recalcul du plan
+        if self.cfg.get(CONF_POWER_SENSOR):
+            self._unsubs.append(
+                async_track_state_change_event(
+                    hass, [self.cfg[CONF_POWER_SENSOR]], lambda _e: self._notify_listeners()
+                )
+            )
 
     async def async_stop(self) -> None:
         for unsub in self._unsubs:
@@ -175,6 +209,7 @@ class Orchestrator:
         self._unsubs.clear()
         if self._pending:
             self._pending()
+        await self._async_release()
         await self._store.async_save(self._dump())
 
     def add_listener(self, cb: Callable[[], None]) -> Callable[[], None]:
@@ -188,13 +223,16 @@ class Orchestrator:
 
     # ------------------------------------------------------------ mémoire
     def _restore(self, data: dict) -> None:
-        self.auto_control = data.get("auto_control", True)
+        self.auto_control = data.get("auto_control", bool(self.cfg.get(CONF_AUTO_START, True)))
         seen = data.get("options_seen", {})
         # Une valeur changée dans les options l'emporte sur la valeur à chaud
         if seen.get(CONF_PROFILE) == self.cfg[CONF_PROFILE] and data.get("profile") in PROFILES:
             self.profile_name = data["profile"]
         if seen.get(CONF_GAIN_THRESHOLD) == self.cfg[CONF_GAIN_THRESHOLD] and "gain_threshold" in data:
             self.gain_threshold = float(data["gain_threshold"])
+        if seen.get(CONF_RESERVE_SOC) == self.cfg[CONF_RESERVE_SOC] and "reserve_soc" in data:
+            self.reserve_soc = float(data["reserve_soc"])
+        self.keeper = SocKeeper(data.get("keeper"))
         self.measured_efficiency = data.get("measured_efficiency")
         self.solar_factor = float(data.get("solar_factor", 1.0))
         self.solar_history = dict(data.get("solar_history", {}))
@@ -214,9 +252,12 @@ class Orchestrator:
             "auto_control": self.auto_control,
             "profile": self.profile_name,
             "gain_threshold": self.gain_threshold,
+            "reserve_soc": self.reserve_soc,
+            "keeper": self.keeper.dump(),
             "options_seen": {
                 CONF_PROFILE: self.cfg[CONF_PROFILE],
                 CONF_GAIN_THRESHOLD: self.cfg[CONF_GAIN_THRESHOLD],
+                CONF_RESERVE_SOC: self.cfg[CONF_RESERVE_SOC],
             },
             "measured_efficiency": self.measured_efficiency,
             "solar_factor": self.solar_factor,
@@ -235,6 +276,15 @@ class Orchestrator:
     # ------------------------------------------------------------ réglages à chaud
     async def async_set_auto_control(self, on: bool) -> None:
         self.auto_control = on
+        self._save()
+        if not on:
+            await self._async_release()
+        else:
+            self._last_declare = None
+        await self.async_update_plan()
+
+    async def async_set_reserve_soc(self, value: float) -> None:
+        self.reserve_soc = max(0.0, min(50.0, float(value)))
         self._save()
         await self.async_update_plan()
 
@@ -264,6 +314,7 @@ class Orchestrator:
     async def async_check_sources(self) -> None:
         """Vérifie versions et entités des contrats ; lève ou retire les alertes."""
         ok = True
+        tariff_good = False
         for domain, minimum, name in (
             (TARIFF_DOMAIN, TARIFF_MIN_VERSION, "ha-tarifs-electricite"),
             (BATTERY_DOMAIN, BATTERY_MIN_VERSION, "ha-zendure-solarflow-local"),
@@ -276,21 +327,43 @@ class Orchestrator:
                 "integration_version",
                 {"name": name, "minimum": minimum, "found": found or "-"},
             )
-            ok &= good
+            if domain == TARIFF_DOMAIN:
+                tariff_good = good  # recommandée : son absence n'arrête pas le reste
+            else:
+                ok &= good
 
-        self.tariff_entities = src.find_entities(
-            self.hass, TARIFF_DOMAIN, TARIFF_KEYS, config_entry_id=self.cfg[CONF_TARIFF_ENTRY]
+        self.tariff_entities = (
+            src.find_entities(
+                self.hass,
+                TARIFF_DOMAIN,
+                TARIFF_KEYS + TARIFF_CARD_KEYS,
+                config_entry_id=self.cfg.get(CONF_TARIFF_ENTRY),
+            )
+            if self.cfg.get(CONF_TARIFF_ENTRY)
+            else {}
         )
         self.battery_entities = src.find_entities(
             self.hass, BATTERY_DOMAIN, BATTERY_KEYS, device_id=self.cfg[CONF_BATTERY_DEVICE]
         )
-        missing = [k for k in TARIFF_REQUIRED if k not in self.tariff_entities]
-        missing += [k for k in BATTERY_KEYS if k not in self.battery_entities]
+        self.tariff_ok = tariff_good and all(k in self.tariff_entities for k in TARIFF_REQUIRED)
+        missing = [k for k in BATTERY_KEYS if k not in self.battery_entities]
+        if tariff_good and self.cfg.get(CONF_TARIFF_ENTRY):
+            missing += [k for k in TARIFF_REQUIRED if k not in self.tariff_entities]
         self._issue(
             "missing_entities", bool(missing), "missing_entities", {"keys": ", ".join(missing)}
         )
         ok &= not missing
         self.sources_ok = ok
+        # E2 : SOC min / max de chaque batterie réelle
+        self.units = src.battery_units(self.hass, self.cfg[CONF_BATTERY_DEVICE])
+        self.unit_soc = {
+            dev: src.find_entities(self.hass, BATTERY_DOMAIN, UNIT_SOC_KEYS, device_id=dev)
+            for dev in self.units
+        }
+        self.e2_ok = bool(self.unit_soc) and all(
+            len(v) == len(UNIT_SOC_KEYS) for v in self.unit_soc.values()
+        )
+        self._issue("reserve_unavailable", ok and not self.e2_ok, "reserve_unavailable")
 
     def _issue(self, issue_id: str, active: bool, key: str, placeholders: dict | None = None) -> None:
         full_id = f"{self.entry.entry_id}_{issue_id}"
@@ -399,6 +472,10 @@ class Orchestrator:
             return Plan(PLAN_MISSING_DATA, REASON_MISSING_DATA)
         now = dt_util.now()
         starts = step_starts(now, HORIZON_HOURS, STEP_MINUTES)
+        if not self.tariff_ok:
+            # Sans Tarifs, la rentabilité n'est pas calculée : jamais de charge réseau
+            self.missing.append("tariff")
+            return Plan(PLAN_MISSING_DATA, REASON_MISSING_DATA)
         try:
             resp = await src.async_tariff_forecast(
                 self.hass, self.cfg[CONF_TARIFF_ENTRY], HORIZON_HOURS
@@ -421,6 +498,10 @@ class Orchestrator:
             self._last_solar_ok = now
         stale = self._last_solar_ok is None or now - self._last_solar_ok > timedelta(hours=24)
         self._issue("no_solar_forecast", stale, "no_solar_forecast")
+        if stale:
+            # Sans prévision solaire, pas de charge en heures creuses (E3, états dégradés)
+            self.missing.append("solar_forecast")
+            return Plan(PLAN_MISSING_DATA, REASON_MISSING_DATA)
         factor = self.solar_factor if self.cfg[CONF_SOLAR_CORRECTION] else 1.0
         solar = [v * factor for v in spread(periods, starts, STEP)]
         self._remember_solar(periods)
@@ -471,11 +552,48 @@ class Orchestrator:
                 self._save()
         if not steps:
             self.missing.append("tariff_forecast")
-        plan = compute_plan(steps, battery, settings, override)
+        plan = self._plan_with_soc_rules(steps, battery, settings, override)
         if plan.state == PLAN_MISSING_DATA and not self.missing:
             self.missing.append("off_peak_price")
         if not self.auto_control:
             plan.state = PLAN_SUSPENDED
+        return plan
+
+    def _soc_targets(self) -> list[Target]:
+        out: list[Target] = []
+        for dev in self.units:
+            for key, kind in (("min_soc", "min"), ("soc_set", "max")):
+                eid = self.unit_soc.get(dev, {}).get(key)
+                if eid:
+                    lo, hi = UNIT_SOC_BOUNDS[key]
+                    out.append(Target(eid, kind, src.state_float(self.hass, eid), lo, hi))
+        return out
+
+    def _plan_with_soc_rules(self, steps, battery: Battery, settings, override) -> Plan:
+        """Plan avec la réserve de SOC min (E2) et la règle du SOC max (D5).
+
+        La simulation part toujours des réglages de l'utilisateur (mémorisés), et
+        non des valeurs que le Chef d'orchestre a lui-même écrites.
+        """
+        self.keeper.new_plan()
+        if not self.e2_ok:
+            self.full_charge = False
+            return compute_plan_with_reserve(steps, battery, settings, override, None)
+        mins, maxs = [], []
+        for t in self._soc_targets():
+            v = self.keeper.user_value(t)
+            if v is not None:
+                (mins if t.kind == "min" else maxs).append(v)
+        user_min = sum(mins) / len(mins) if mins else battery.soc_min
+        user_max = sum(maxs) / len(maxs) if maxs else battery.soc_max
+        self.user_soc = {"min": user_min, "max": user_max}
+        base = replace(battery, soc_min=user_min, soc_max=user_max, grid_soc_max=user_max)
+        plan = compute_plan_with_reserve(steps, base, settings, override, self.reserve_soc)
+        self.full_charge = wants_full_charge(plan)
+        if self.full_charge and user_max < 100:
+            full = replace(base, soc_max=100.0)
+            plan = compute_plan_with_reserve(steps, full, settings, override, self.reserve_soc)
+        self._save()
         return plan
 
     def _remember_solar(self, periods) -> None:
@@ -507,13 +625,23 @@ class Orchestrator:
         house = self.cfg.get(CONF_HOUSE_SENSOR)
         load_energy = [l.get(LOAD_ENERGY_SENSOR) for l in self.cfg.get(CONF_LOADS) or []]
         load_energy = [x for x in load_energy if x]
-        ids = [house] if house else [
-            self.cfg.get(CONF_GRID_IMPORT),
-            self.cfg.get(CONF_GRID_EXPORT),
-            self.cfg.get(CONF_SOLAR_ACTUAL),
-            *counters["energy_charged"],
-            *counters["energy_discharged"],
-        ]
+        # Sources de la consommation : capteur maison, sinon compteurs saisis à la main,
+        # sinon ceux du tableau Énergie de Home Assistant (D10)
+        flows: dict[str, list[str]] = {k: [] for k in ("import", "export", "solar", "charge", "discharge")}
+        if not house:
+            if self.cfg.get(CONF_GRID_IMPORT):
+                flows["import"] = [self.cfg[CONF_GRID_IMPORT]]
+                flows["export"] = [x for x in [self.cfg.get(CONF_GRID_EXPORT)] if x]
+                flows["solar"] = [x for x in [self.cfg.get(CONF_SOLAR_ACTUAL)] if x]
+            else:
+                flows = src.energy_dashboard_stats(await src.async_energy_prefs(hass))
+            if not flows["charge"] and not flows["discharge"]:
+                flows["charge"] = list(counters.get("energy_charged") or [])
+                flows["discharge"] = list(counters.get("energy_discharged") or [])
+        self.consumption_source = "house" if house else (
+            "manual" if self.cfg.get(CONF_GRID_IMPORT) else ("energy_dashboard" if flows["import"] else "none")
+        )
+        ids = [house] if house else [x for v in flows.values() for x in v]
         ids = [i for i in ids if i] + load_energy
         sums = await src.async_hourly_sums(hass, ids, start, end)
         changes = {sid: dict(hourly_changes(pts)) for sid, pts in sums.items()}
@@ -525,14 +653,15 @@ class Orchestrator:
         if house:
             for ts, v in series(house).items():
                 hourly[ts] += v
-        elif self.cfg.get(CONF_GRID_IMPORT):
-            for ts, v in series(self.cfg.get(CONF_GRID_IMPORT)).items():
-                hourly[ts] += v
+        elif flows["import"]:
+            for sid in flows["import"]:
+                for ts, v in series(sid).items():
+                    hourly[ts] += v
             for sign, sids in (
-                (-1, [self.cfg.get(CONF_GRID_EXPORT)]),
-                (1, [self.cfg.get(CONF_SOLAR_ACTUAL)]),
-                (-1, counters["energy_charged"]),
-                (1, counters["energy_discharged"]),
+                (-1, flows["export"]),
+                (1, flows["solar"]),
+                (-1, flows["charge"]),
+                (1, flows["discharge"]),
             ):
                 for sid in sids:
                     for ts, v in series(sid).items():
@@ -542,6 +671,7 @@ class Orchestrator:
             for ts, v in series(sid).items():
                 if ts in hourly:
                     hourly[ts] -= v
+        self._solar_actual_ids = [self.cfg[CONF_SOLAR_ACTUAL]] if self.cfg.get(CONF_SOLAR_ACTUAL) else flows["solar"]
         self.profile.daily_kwh_fallback = float(self.cfg[CONF_DAILY_KWH])
         self.profile.learn(
             [(ts, max(0.0, v)) for ts, v in hourly.items()], weeks=weeks
@@ -562,13 +692,14 @@ class Orchestrator:
         self.measured_efficiency = measured or None
 
         # Facteur de correction solaire sur 14 jours
-        actual_id = self.cfg.get(CONF_SOLAR_ACTUAL)
-        if actual_id and self.cfg[CONF_SOLAR_CORRECTION]:
+        actual_ids = self._solar_actual_ids
+        if actual_ids and self.cfg[CONF_SOLAR_CORRECTION]:
             s_start = end - timedelta(days=SOLAR_FACTOR_DAYS + 1)
-            pts = (await src.async_hourly_sums(hass, [actual_id], s_start, end)).get(actual_id, [])
+            got = await src.async_hourly_sums(hass, actual_ids, s_start, end)
             by_day: dict[str, float] = defaultdict(float)
-            for ts, v in hourly_changes(pts):
-                by_day[ts.date().isoformat()] += v
+            for pts in got.values():
+                for ts, v in hourly_changes(pts):
+                    by_day[ts.date().isoformat()] += v
             pairs = [
                 (self.solar_history[d], by_day[d])
                 for d in self.solar_history
@@ -620,11 +751,124 @@ class Orchestrator:
             await self._set_number("charge_target_soc", plan.target_soc)
         if current != mode:
             st = self.hass.states.get(select_id) if select_id else None
-            if st is None or mode not in (st.attributes.get("options") or []):
-                return
+            if st is not None and mode in (st.attributes.get("options") or []):
+                await self.hass.services.async_call(
+                    "select", "select_option", {"entity_id": select_id, "option": mode}, blocking=True
+                )
+        await self._async_apply_soc(plan, now)
+        await self._async_declare(True, now)
+
+    async def _async_apply_soc(self, plan: Plan, now: datetime) -> None:
+        """Réserve de SOC min et SOC max à 100 % (E2), batterie par batterie."""
+        if not self.e2_ok:
+            return
+        writes = self.keeper.writes(self._soc_targets(), now, plan.reserve_soc, self.full_charge)
+        for entity_id, value in writes:
             await self.hass.services.async_call(
-                "select", "select_option", {"entity_id": select_id, "option": mode}, blocking=True
+                "number", "set_value", {"entity_id": entity_id, "value": value}, blocking=True
             )
+        if writes:
+            self._save()
+            self._notify_listeners()
+
+    async def _async_release(self) -> None:
+        """Rend leurs réglages aux batteries et retire la déclaration de pilote."""
+        for entity_id, value in self.keeper.restore_all():
+            try:
+                await self.hass.services.async_call(
+                    "number", "set_value", {"entity_id": entity_id, "value": value}, blocking=True
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("SOC de %s non restitué : %s", entity_id, err)
+        self._save()
+        await self._async_declare(False, dt_util.now())
+
+    async def _async_declare(self, active: bool, now: datetime) -> None:
+        """Déclaration de pilote externe auprès de Zendure Local (≥ 1.4.0, D6).
+
+        Renouvelée toutes les 15 minutes ; sans renouvellement, Zendure Local
+        réaffiche seul ses réglages au bout de 30 minutes.
+        """
+        if not self.hass.services.has_service(BATTERY_DOMAIN, EXTERNAL_CONTROL_SERVICE):
+            return
+        if active and self._last_declare and now - self._last_declare < timedelta(
+            minutes=EXTERNAL_CONTROL_RENEW_MIN
+        ):
+            return
+        for dev in self.controlled_device_ids:
+            try:
+                await self.hass.services.async_call(
+                    BATTERY_DOMAIN,
+                    EXTERNAL_CONTROL_SERVICE,
+                    {
+                        "device_id": dev,
+                        "active": active,
+                        "controller": CONTROLLER_NAME,
+                        "controlled_keys": self.controlled_keys(dev),
+                    },
+                    blocking=True,
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Déclaration de pilote refusée pour %s : %s", dev, err)
+        self._last_declare = now if active else None
+
+    # ------------------------------------------------------------ interface (E1)
+    @property
+    def controlled_device_ids(self) -> list[str]:
+        target = self.cfg[CONF_BATTERY_DEVICE]
+        return [target] + [d for d in self.units if d != target]
+
+    def controlled_keys(self, device_id: str) -> list[str]:
+        keys: list[str] = []
+        if device_id == self.cfg[CONF_BATTERY_DEVICE]:
+            keys += ["operating_mode", "import_limit", "charge_target_soc"]
+        if self.e2_ok and device_id in self.unit_soc:
+            keys += list(UNIT_SOC_KEYS)
+        return keys
+
+    @property
+    def controlled_entities(self) -> list[str]:
+        out = [self.battery_entities.get(k) for k in ("operating_mode", "import_limit", "charge_target_soc")]
+        if self.e2_ok:
+            for dev in self.units:
+                out += [self.unit_soc.get(dev, {}).get(k) for k in UNIT_SOC_KEYS]
+        return [e for e in out if e]
+
+    @property
+    def interface_attributes(self) -> dict[str, Any]:
+        return {
+            "controlled_device_id": self.cfg[CONF_BATTERY_DEVICE],
+            "controlled_device_ids": self.controlled_device_ids,
+            "controlled_entities": self.controlled_entities,
+            "interface_version": INTERFACE_VERSION,
+        }
+
+    # ------------------------------------------------------------ puissance au tableau
+    @property
+    def board_power_w(self) -> float | None:
+        return src.power_w(self.hass, self.cfg.get(CONF_POWER_SENSOR))
+
+    def running_loads(self) -> list[dict[str, Any]]:
+        now = dt_util.now()
+        out = []
+        for load in self.cfg.get(CONF_LOADS) or []:
+            p = src.power_w(self.hass, load.get(LOAD_POWER_SENSOR))
+            st = src.state_str(self.hass, load.get(LOAD_STATE_ENTITY))
+            running = None
+            if p is not None:
+                running = p > float(load.get(LOAD_THRESHOLD) or 100)
+            elif st is not None:
+                running = st == "on"
+            out.append(
+                {
+                    "name": load.get(LOAD_NAME),
+                    "power_w": float(load.get(LOAD_POWER) or 0),
+                    "current_w": p,
+                    "running": running,
+                    "usual_now": in_window(now, parse_window(load.get(LOAD_WINDOW))),
+                }
+            )
+        return out
 
     async def _set_number(self, key: str, value: float | None) -> None:
         entity_id = self.battery_entities.get(key)

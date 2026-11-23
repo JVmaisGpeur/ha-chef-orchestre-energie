@@ -13,7 +13,7 @@ Vocabulaire :
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 import math
 
@@ -87,6 +87,12 @@ class Battery:
     soc_max: float = 100.0
     max_charge_w: float = 2400.0
     max_discharge_w: float = 2400.0
+    grid_soc_max: float | None = None  # plafond de la charge réseau (SOC max de l'utilisateur)
+
+    @property
+    def grid_cap(self) -> float:
+        cap = self.soc_max if self.grid_soc_max is None else min(self.soc_max, self.grid_soc_max)
+        return max(self.soc_min, cap)
 
     @property
     def range_kwh(self) -> float:
@@ -129,6 +135,7 @@ class StepPlan:
     discharge_kwh: float = 0.0  # énergie fournie à la maison par la batterie
     profitable: bool = False
     off_peak: bool = False
+    overflow_kwh: float = 0.0  # surplus solaire qui ne rentre plus (batterie pleine)
 
 
 @dataclass
@@ -138,6 +145,11 @@ class Plan:
     window_start: datetime | None = None
     window_end: datetime | None = None
     cover_end: datetime | None = None  # fin de la période à couvrir
+    charge_end: datetime | None = None
+    price_gap: float | None = None  # meilleur écart HP − (HC ÷ rendement + usure), €/kWh
+    reserve_soc: float | None = None  # SOC minimum relevé (E2) si appliqué
+    soc_min: float | None = None  # SOC minimum utilisé par la simulation
+    soc_max: float | None = None  # SOC maximum utilisé par la simulation
     charge_start: datetime | None = None
     target_soc: float | None = None
     energy_to_charge_kwh: float = 0.0  # énergie à stocker dans la batterie
@@ -284,6 +296,9 @@ def compute_plan(
     any_peak = [not st.off_peak for st in steps]
 
     plan = Plan(PLAN_IDLE, REASON_ENOUGH_ENERGY)
+    plan.soc_min, plan.soc_max = b.soc_min, b.soc_max
+    gaps = [steps[k].price - cost for k in range(cs, ce) if steps[k].price is not None and not steps[k].off_peak]
+    plan.price_gap = round(max(gaps), 4) if gaps else None
     plan.window_start = steps[ws].start
     plan.window_end = steps[we - 1].start + timedelta(hours=step_h)
     plan.cover_end = steps[ce - 1].start + timedelta(hours=step_h) if ce > cs else plan.window_end
@@ -322,14 +337,15 @@ def compute_plan(
                     break
             needed = min(needed, e_range)
 
-    to_store = max(0.0, min(needed - e_we_free, e_range - e_ws))
+    e_grid_cap = max(0.0, b.capacity_kwh * (b.grid_cap - b.soc_min) / 100)
+    to_store = max(0.0, min(needed - e_we_free, e_range - e_ws, e_grid_cap - e_ws))
     if override is not None:
         if override.mode == "idle":
             to_store = 0.0
             plan.reason = REASON_FORCED_IDLE
         elif override.mode == "charge":
-            target = override.target_soc if override.target_soc is not None else b.soc_max
-            target = min(max(target, b.soc_min), b.soc_max)
+            target = override.target_soc if override.target_soc is not None else b.grid_cap
+            target = min(max(target, b.soc_min), b.grid_cap)
             e_target = b.capacity_kwh * (target - b.soc_min) / 100
             to_store = max(0.0, e_target - e_ws)
             plan.reason = REASON_FORCED_CHARGE
@@ -341,7 +357,7 @@ def compute_plan(
         plan.energy_to_charge_kwh = to_store
         plan.grid_energy_kwh = to_store / eta
         soc_ws = b.soc_min + e_ws / b.capacity_kwh * 100
-        plan.target_soc = min(b.soc_max, math.ceil(soc_ws + to_store / b.capacity_kwh * 100))
+        plan.target_soc = min(b.grid_cap, math.ceil(soc_ws + to_store / b.capacity_kwh * 100))
         _schedule_charge(plan, steps, ws, we, b, s, step_h)
     elif plan.state == PLAN_IDLE and override is None:
         plan.reason = REASON_SOLAR_COVERS if plan.peak_need_kwh < 0.05 else REASON_ENOUGH_ENERGY
@@ -380,13 +396,18 @@ def _schedule_charge(plan: Plan, steps, ws, we, b: Battery, s: Settings, step_h:
             remaining -= avail_w / 1000 * step_h
             k2 += 1
         plan.may_not_finish = remaining > 1e-6
+        plan.charge_end = steps[min(k2, len(steps)) - 1].start + timedelta(hours=step_h)
+    else:
+        plan.charge_end = steps[last - 1].start + timedelta(hours=step_h)
     plan.charge_start = steps[k].start
 
 
 def _build_steps(plan, steps, worth, reserve, cover, ws, we, b, s, step_h) -> list[StepPlan]:
     eta = math.sqrt(min(max(s.efficiency, 0.3), 1.0))
     e_range = b.range_kwh
-    e = b.energy_kwh
+    # Énergie au-dessus du SOC minimum ; négative si la batterie est déjà en dessous
+    # (réserve relevée) : elle ne décharge alors plus, mais peut encore stocker.
+    e = min(b.capacity_kwh * (b.soc - b.soc_min) / 100, e_range)
     target_e = (
         b.capacity_kwh * (plan.target_soc - b.soc_min) / 100
         if plan.target_soc is not None
@@ -419,12 +440,17 @@ def _build_steps(plan, steps, worth, reserve, cover, ws, we, b, s, step_h) -> li
         # SOC simulé
         if charge > 0:
             e = min(e + charge * eta, e_range)
+        overflow = 0.0
         if net < 0 and mode != MODE_OFF:
-            e = min(e + min(-net, b.max_charge_w / 1000 * step_h) * eta, e_range)
+            stored = min(-net, b.max_charge_w / 1000 * step_h) * eta
+            room = max(0.0, e_range - e)
+            if stored > room:
+                overflow = (stored - room) / eta
+            e = min(e + stored, e_range)
         delivered = 0.0
         if net > 0 and mode == MODE_SMART:
-            out_kwh = min(net, b.max_discharge_w / 1000 * step_h, e * eta)
-            e = max(0.0, e - out_kwh / eta)
+            out_kwh = min(net, b.max_discharge_w / 1000 * step_h, max(0.0, e) * eta)
+            e = e - out_kwh / eta
             delivered = out_kwh
         soc = b.soc_min + e / b.capacity_kwh * 100 if b.capacity_kwh else 0.0
         out.append(
@@ -437,6 +463,7 @@ def _build_steps(plan, steps, worth, reserve, cover, ws, we, b, s, step_h) -> li
                 solar_kwh=st.solar_kwh,
                 charge_kwh=round(charge, 4),
                 discharge_kwh=round(delivered, 4),
+                overflow_kwh=round(overflow, 4),
                 profitable=worth[k],
                 off_peak=st.off_peak,
             )
@@ -467,6 +494,56 @@ def _forecast_gain(plan: Plan, price_hc: float, s: Settings) -> float:
     )
     gain -= plan.grid_energy_kwh * price_hc
     return round(gain, 2)
+
+
+# ---------------------------------------------------------------- SOC min / max (E2)
+OVERFLOW_MIN_KWH = 0.2  # surplus solaire prévu au-delà duquel on passe le SOC max à 100 %
+
+
+def compute_plan_with_reserve(
+    steps: list[Step],
+    battery: Battery,
+    settings: Settings,
+    override: Override | None = None,
+    reserve_soc: float | None = None,
+) -> Plan:
+    """Plan complet avec la réserve de SOC (E2).
+
+    Si le plan est non rentable et que la réserve dépasse le SOC minimum de
+    l'utilisateur, la simulation est refaite avec la réserve : seule l'énergie
+    au-dessus d'elle peut alors être rendue aux heures pleines.
+    """
+    plan = compute_plan(steps, battery, settings, override)
+    if (
+        reserve_soc is not None
+        and plan.state == PLAN_NOT_PROFITABLE
+        and reserve_soc > battery.soc_min
+    ):
+        raised = replace(battery, soc_min=min(reserve_soc, battery.soc_max))
+        plan = compute_plan(steps, raised, settings, override)
+        plan.reserve_soc = raised.soc_min
+    return plan
+
+
+def daylight_overflow(plan: Plan, solar_min: float = SOLAR_MIN_KWH) -> float:
+    """Surplus solaire prévu qui ne rentrera pas dans la batterie, sur la journée
+    solaire en cours (ou la prochaine, s'il fait nuit)."""
+    total = 0.0
+    seen_sun = False
+    for sp in plan.steps:
+        sunny = sp.solar_kwh > solar_min
+        if sunny:
+            seen_sun = True
+            total += sp.overflow_kwh
+        elif seen_sun:
+            break
+    return round(total, 3)
+
+
+def wants_full_charge(plan: Plan) -> bool:
+    """Règle D5 : SOC max à 100 % quand le soleil remplira la batterie et qu'il
+    resterait encore du surplus à injecter."""
+    return daylight_overflow(plan) >= OVERFLOW_MIN_KWH
 
 
 # ---------------------------------------------------------------- puissance

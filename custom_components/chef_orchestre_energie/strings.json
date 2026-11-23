@@ -2,70 +2,80 @@
   "config": {
     "step": {
       "user": {
+        "title": "Detection",
+        "description": "Integrations found on your Home Assistant:\n\n- Battery — ha-zendure-solarflow-local (required, ≥ {battery_min}): {battery_found}\n- Solar forecast (required): {solar_found}\n- Tariffs — ha-tarifs-electricite (recommended, ≥ {tariff_min}): {tariff_found}\n\nWithout Electricity Tariffs the conductor installs but does not drive anything: it needs prices and off-peak hours ({tariff_url}). Everything else (subscribed power, offer, prices, off-peak hours, battery modes and SOC) is read from these integrations: nothing to enter again."
+      },
+      "sources": {
         "title": "Sources",
-        "description": "Requires ha-tarifs-electricite ≥ {tariff_min} and ha-zendure-solarflow-local ≥ {battery_min}. Forecast.Solar creates one entry per panel orientation: tick them all.",
+        "description": "Several choices are possible: pick the ones to use. Forecast.Solar creates one entry per panel orientation: tick them all.",
         "data": {
-          "tariff_entry_id": "Electricity tariff contract",
+          "tariff_entry_id": "Electricity Tariffs contract",
           "battery_device_id": "Battery or battery Group to drive",
           "solar_entry_ids": "Solar forecasts to add up (one per panel array)"
         }
       },
-      "consumption": {
-        "title": "House consumption",
-        "description": "Without a house sensor, consumption is computed as grid import − export + solar production + battery discharge − battery charge. The daily average is only used until 7 days of history are learned.",
+      "profit": {
+        "title": "Profitability",
         "data": {
-          "house_energy_sensor": "House consumption energy sensor",
-          "grid_import_sensor": "Grid import energy (if no house sensor)",
-          "grid_export_sensor": "Grid export energy",
-          "solar_actual_sensor": "Actual solar production energy",
-          "daily_kwh": "Average daily consumption (first days)"
-        },
-        "data_description": {
-          "house_energy_sensor": "Only if it measures the house alone. Leave empty with AC batteries (Zendure AC, AC+): their charge and discharge would be counted as consumption.",
-          "grid_import_sensor": "Cumulative energy imported from the grid (e.g. Enphase \"Lifetime net energy consumption\").",
-          "grid_export_sensor": "Cumulative energy exported to the grid (e.g. Enphase \"Lifetime net energy production\").",
-          "solar_actual_sensor": "Cumulative solar production (e.g. Enphase \"Production CT energy delivered\"). Also used to correct the forecast.",
-          "daily_kwh": "Used until 7 days of history are learned."
-        }
-      },
-      "economy": {
-        "title": "Economics",
-        "data": {
-          "efficiency": "Battery round-trip efficiency",
-          "wear": "Battery wear per kWh delivered",
           "gain_threshold": "Profitability threshold",
-          "profile": "Caution profile"
+          "efficiency": "Battery round-trip efficiency",
+          "reserve_soc": "Reserve when charging is not profitable"
         },
         "data_description": {
-          "efficiency": "85 % by default, then learned over 30 days from the battery energy counters.",
-          "wear": "Battery price ÷ (capacity × announced cycles). 0 to ignore.",
-          "gain_threshold": "A night grid charge only happens if each kWh returned earns at least this much (0.02 by default).",
-          "profile": "Safety margin added to the peak-hour need: cautious 20 %, balanced 10 %, economical 0 %."
+          "gain_threshold": "The battery only charges off-peak if each kWh given back earns at least this amount (0.02 by default).",
+          "efficiency": "85 % by default, then learned over 30 days from the battery counters.",
+          "reserve_soc": "Min SOC applied to the batteries when the night is not profitable (50 % by default). Your own settings come back as soon as it is profitable or control is turned off."
         }
       },
-      "power": {
-        "title": "Power",
+      "loads": {
+        "title": "Large loads",
+        "description": "Water heater, heat pump, electric vehicle… They are never switched off: they are used to keep the charging power under the subscribed power and to warn you. Optional.",
+        "menu_options": {
+          "load_new": "Add a large load",
+          "measure": "Skip"
+        }
+      },
+      "load_new": {
+        "title": "Large load",
+        "description": "Already added: {count}.",
         "data": {
-          "subscribed_kva": "Subscribed power (only if missing in Tarifs Électricité)",
-          "three_phase": "Three-phase installation",
-          "margin": "Margin under the subscribed power"
+          "name": "Name",
+          "kind": "Type",
+          "power_kw": "Power",
+          "power_sensor": "Power sensor (running detection)",
+          "state_entity": "On/off entity (running detection)",
+          "add_another": "Add another one next"
         },
         "data_description": {
-          "subscribed_kva": "Read from ha-tarifs-electricite when it is set there.",
-          "three_phase": "The limit becomes subscribed power ÷ 3 on the battery's phase; the grid sensor must measure that phase.",
-          "margin": "10 % minimum: the regulation can exceed the limit for 2 to 5 s when a large appliance starts."
+          "power_kw": "Rated power in kW, for example 3 for a 3,000 W water heater.",
+          "power_sensor": "Optional: tells whether it is running."
+        }
+      },
+      "measure": {
+        "title": "Power measurement",
+        "description": "Optional: a sensor measuring the power drawn at the main panel (for example Shelly Pro 3EM, battery phase). It feeds the card gauge.",
+        "data": {
+          "power_sensor": "Panel power"
+        }
+      },
+      "recap": {
+        "title": "Summary",
+        "description": "- Tariffs: {tariff}\n- Battery: {battery}\n- Solar forecast: {solar}\n- Profitability threshold: {threshold} €/kWh, efficiency {efficiency} %, reserve {reserve} %\n- Large loads: {loads}\n- Panel power: {power_sensor}\n\nEverything can be changed later in Configure.",
+        "data": {
+          "auto_start": "Turn control on now"
+        },
+        "data_description": {
+          "auto_start": "Leave ticked so the conductor drives the battery from tonight. Otherwise it computes the plan without driving anything."
         }
       }
     },
     "error": {
-      "tariff_version": "ha-tarifs-electricite {tariff_min} or newer is required.",
       "battery_version": "ha-zendure-solarflow-local {battery_min} or newer is required.",
       "no_solar_selected": "Select at least one solar forecast."
     },
     "abort": {
       "already_configured": "Already configured.",
-      "missing_tariff": "Install and configure ha-tarifs-electricite first: {tariff_url}",
-      "missing_battery": "Install and configure ha-zendure-solarflow-local first: {battery_url}",
+      "missing_battery": "First install and set up ha-zendure-solarflow-local: {battery_url}",
       "missing_solar": "Install a solar forecast first (Forecast.Solar, Open-Meteo Solar Forecast or Solcast): {solar_url}"
     }
   },
@@ -89,26 +99,34 @@
           "efficiency": "Battery round-trip efficiency",
           "wear": "Battery wear per kWh delivered",
           "gain_threshold": "Profitability threshold",
-          "profile": "Caution profile"
+          "profile": "Caution profile",
+          "reserve_soc": "Reserve when charging is not profitable"
         },
         "data_description": {
           "efficiency": "85 % by default, then learned over 30 days from the battery energy counters.",
           "wear": "Battery price ÷ (capacity × announced cycles). 0 to ignore.",
           "gain_threshold": "A night grid charge only happens if each kWh returned earns at least this much (0.02 by default).",
-          "profile": "Safety margin added to the peak-hour need: cautious 20 %, balanced 10 %, economical 0 %."
+          "profile": "Safety margin added to the peak-hour need: cautious 20 %, balanced 10 %, economical 0 %.",
+          "reserve_soc": "Min SOC applied when the night is not profitable (50 % by default)."
         }
       },
       "power": {
         "title": "Power",
         "data": {
-          "subscribed_kva": "Subscribed power (only if missing in Tarifs Électricité)",
+          "power_sensor": "Panel power",
+          "gauge_warn": "Gauge turns orange from",
+          "gauge_crit": "Gauge turns red from",
+          "subscribed_kva": "Subscribed power (only if missing from Electricity Tariffs)",
           "three_phase": "Three-phase installation",
           "margin": "Margin under the subscribed power"
         },
         "data_description": {
           "subscribed_kva": "Read from ha-tarifs-electricite when it is set there.",
           "three_phase": "The limit becomes subscribed power ÷ 3 on the battery's phase; the grid sensor must measure that phase.",
-          "margin": "10 % minimum: the regulation can exceed the limit for 2 to 5 s when a large appliance starts."
+          "margin": "10 % minimum: the regulation can exceed the limit for 2 to 5 s when a large appliance starts.",
+          "power_sensor": "Power drawn sensor (e.g. Shelly Pro 3EM). Feeds the card gauge.",
+          "gauge_warn": "As % of the subscribed power (80 % by default).",
+          "gauge_crit": "As % of the subscribed power (95 % by default)."
         }
       },
       "consumption": {
@@ -183,15 +201,12 @@
         "data": {
           "name": "Name",
           "kind": "Type",
-          "power_w": "Rated power",
           "power_sensor": "Power sensor (running detection)",
-          "threshold_w": "Running above",
           "state_entity": "On/off entity (running detection)",
-          "energy_sensor": "Energy sensor (removed from the house profile)",
-          "usual_window": "Usual time window"
+          "power_kw": "Power"
         },
         "data_description": {
-          "usual_window": "Format 23:00-02:00. Leave empty if unknown."
+          "power_kw": "Rated power in kW."
         }
       }
     },
@@ -199,7 +214,7 @@
       "tariff_version": "ha-tarifs-electricite {tariff_min} or newer is required.",
       "battery_version": "ha-zendure-solarflow-local {battery_min} or newer is required.",
       "no_solar_selected": "Select at least one solar forecast.",
-      "bad_window": "Expected format: 23:00-02:00"
+      "gauge_order": "The critical threshold must be higher than the warning threshold."
     }
   },
   "selector": {
@@ -297,6 +312,9 @@
           "medium": "Medium",
           "good": "Good"
         }
+      },
+      "board_power": {
+        "name": "Panel power"
       }
     },
     "switch": {
@@ -317,6 +335,9 @@
     "number": {
       "gain_threshold": {
         "name": "Profitability threshold"
+      },
+      "reserve_soc": {
+        "name": "Reserve if not profitable"
       }
     },
     "binary_sensor": {
@@ -354,6 +375,10 @@
     "battery_degraded": {
       "title": "Battery Group degraded",
       "description": "At least one battery of the Group is out of the distribution. Plans continue with the others."
+    },
+    "reserve_unavailable": {
+      "title": "SOC reserve cannot be applied",
+      "description": "The conductor cannot find the min SOC and max SOC settings of the batteries. Update ha-zendure-solarflow-local: without them, the 50 % reserve and the switch to 100 % on sunny days are disabled; the rest of the control works."
     }
   },
   "exceptions": {
