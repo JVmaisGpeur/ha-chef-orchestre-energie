@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.3.0 – 25/11/2026
+
+- **Routeur solaire F1ATB** (ha-routeur-f1atb) : routeurs listés directement à l'installation, priorité « batteries d'abord » (verrouillage par arrêts forcés de 30 min renouvelés) ou « routeur d'abord » (plafond de charge des batteries), décharge interdite pendant les plages ON, plage ON bloquée si le ballon est chaud ou si le soleil de demain suffit, délestage quand les batteries chauffent le ballon (exception été), contrôle horaire du seuil Pw, mode « Affichage seulement » respecté. Nouvel écran « Routeurs solaires » dans l'assistant et les options.
+- **Consommateurs non alimentés par les batteries** : option « Alimenté par les batteries » par gros consommateur (non par défaut pour un routeur). Leur puissance en marche est envoyée à Zendure (« Puissance à ne pas couvrir ») et leur énergie sort du besoin du plan du soir.
+- **Charge complète et calibration** : compteur de jours depuis la dernière charge à 100 % par batterie, charge complète programmée à partir de 20 jours (soleil, sinon nuit bon marché hors veille de jour cher), calibration en cours respectée, liste « Charge complète » (Automatique, prochain soleil, cette nuit, maintenant, ignorer) et service `full_charge`. Synthèse de la réponse du support Zendure dans le README et la carte.
+- **Choisir ce qui est piloté** : interrupteurs « Pilotage des batteries » et « Pilotage du routeur » (un par routeur) sous l'interrupteur général.
+- **Carte Énergie** : « Gain par kWh » et boutons « i » (gain, SOC min appliqué, marge, charge complète), ligne « Charge complète » par batterie avec menu et confirmation du coût pour « Maintenant », bloc Routeur solaire (une ligne par routeur, interrupteur, ouverture de sa carte en pop-up), mention « Réseau » pour les consommateurs exclus.
+- **Correction** : le menu Avancé des réglages affichait une erreur (champ numérique sans unité).
+- Changement : seule l'énergie des consommateurs non alimentés par les batteries est retirée de la consommation apprise.
+
+### Interface
+
+- Zendure ≥ 1.6.0 détecté par ses entités : `charge_power_limit`, `discharge_power_limit`, `excluded_power` (déclarés dans `controlled_keys`), `calibrating` par batterie.
+- ha-routeur-f1atb : `f1atb_routeur.set_external_control` et `set_mode` ; entités lues `routed_power`, `routed_energy_total`, `water_temperature`, `target_reached`, `connected`, `control_enabled`, `load_power`, `on_slot_active`, `routing_power_threshold`.
+- `controlled_device_ids` et `controlled_entities` ne listent que ce qui est réellement piloté.
+- Nouvelles entités : `switch.battery_control`, `switch.router_control` (par routeur), `select.full_charge`, `sensor.full_charge_days` (par batterie) ; nouveaux attributs du plan : `routers`, `full_charge_planned`, `full_charge_request`, `full_charge_now_kwh`, `full_charge_now_cost`, `calibrating`, `excluded_power`, `battery_control`.
+- Nouvelles alertes : `full_charge_late`, `router_found`, `router_threshold`.
+
 ## 1.2.0 – 23/11/2026
 
 - **Carte Énergie** (`type: custom:chef-orchestre-energie-card`), livrée avec l'intégration : tarif en cours, batteries, plan pour demain et puissance au tableau, avec l'interrupteur de pilotage. Les boutons ouvrent la carte Tarifs électricité, la carte Zendure et la carte détaillée du plan dans une pop-up. Blocs masqués par défaut, seuils de jauge 80 / 95 % réglables, états dégradés affichés en clair, français et anglais.

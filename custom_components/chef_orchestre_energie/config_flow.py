@@ -1,4 +1,4 @@
-"""Assistant d'installation unique (6 écrans, E4) et options."""
+"""Assistant d'installation unique (E4, routeurs en v1.3.0) et options."""
 
 from __future__ import annotations
 
@@ -19,6 +19,18 @@ from .const import (
     CONF_DAILY_KWH,
     CONF_EFFICIENCY,
     CONF_FINISH_ADVANCE,
+    CONF_FULL_CHARGE_AUTO,
+    CONF_FULL_CHARGE_DAYS,
+    CONF_ROUTER_DAILY_KWH,
+    CONF_ROUTER_PRIORITY,
+    CONF_ROUTERS,
+    CONF_SUMMER_SOC,
+    LOAD_BATTERY,
+    LOAD_ROUTER,
+    ROUTER_DOMAIN,
+    ROUTER_KEYS,
+    ROUTER_PRIORITIES,
+    ROUTER_USAGES,
     CONF_GAUGE_CRIT,
     CONF_GAUGE_WARN,
     CONF_GAIN_THRESHOLD,
@@ -63,6 +75,7 @@ from .const import (
 URL_TARIFF = "https://github.com/JVmaisGpeur/ha-tarifs-electricite"
 URL_BATTERY = "https://github.com/JVmaisGpeur/ha-zendure-solarflow-local"
 URL_SOLAR = "https://www.home-assistant.io/integrations/forecast_solar/"
+URL_ROUTER = "https://github.com/JVmaisGpeur/ha-routeur-f1atb"
 
 ENERGY_SENSOR = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor", device_class="energy")
@@ -80,11 +93,12 @@ OPTIONAL_ENTITIES = (
 
 
 def _num(lo: float, hi: float, step: float, unit: str | None = None) -> selector.NumberSelector:
-    return selector.NumberSelector(
-        selector.NumberSelectorConfig(
-            min=lo, max=hi, step=step, unit_of_measurement=unit, mode=selector.NumberSelectorMode.BOX
-        )
-    )
+    # unit_of_measurement doit être absent, pas None : Home Assistant refuse None et
+    # l'écran ne s'ouvre pas (bug du menu Avancé, v1.2.0).
+    kwargs: dict[str, Any] = {"min": lo, "max": hi, "step": step, "mode": selector.NumberSelectorMode.BOX}
+    if unit:
+        kwargs["unit_of_measurement"] = unit
+    return selector.NumberSelector(selector.NumberSelectorConfig(**kwargs))
 
 
 def _choice(options: list[str], key: str) -> selector.SelectSelector:
@@ -239,6 +253,7 @@ def _load_schema(cur: dict, with_more: bool = False) -> vol.Schema:
         _opt(LOAD_STATE_ENTITY, cur): selector.EntitySelector(
             selector.EntitySelectorConfig(domain=["switch", "binary_sensor", "input_boolean"])
         ),
+        vol.Required(LOAD_BATTERY, default=bool(cur.get(LOAD_BATTERY, True))): selector.BooleanSelector(),
     }
     if with_more:
         fields[vol.Required("add_another", default=False)] = selector.BooleanSelector()
@@ -254,12 +269,84 @@ def _load_from_input(user_input: dict, previous: dict | None = None) -> dict:
             LOAD_POWER: round(float(user_input["power_kw"]) * 1000),
             LOAD_POWER_SENSOR: user_input.get(LOAD_POWER_SENSOR) or None,
             LOAD_STATE_ENTITY: user_input.get(LOAD_STATE_ENTITY) or None,
+            LOAD_BATTERY: bool(user_input.get(LOAD_BATTERY, True)),
         }
     )
     load.setdefault(LOAD_THRESHOLD, 100)
     load.setdefault(LOAD_ENERGY_SENSOR, None)
     load.setdefault(LOAD_WINDOW, None)
     return load
+
+
+def _guess_usage(name: str) -> str:
+    low = name.lower()
+    if "piscine" in low or "pool" in low:
+        return "pool"
+    if "chauff" in low and "eau" not in low or "heating" in low or "radiat" in low:
+        return "heating"
+    return "water_heater"
+
+
+def _router_load(hass, router: dict[str, Any], previous: dict | None = None) -> dict:
+    """Ligne « gros consommateur » d'un routeur (N5) : préremplie, batteries à non."""
+    ents = src.find_entities(hass, ROUTER_DOMAIN, ROUTER_KEYS, device_id=router["device_id"])
+    power = src.state_float(hass, ents.get("load_power"))
+    load = dict(previous or {})
+    load.setdefault(LOAD_BATTERY, False)
+    load.update(
+        {
+            LOAD_NAME: load.get(LOAD_NAME) or router["name"],
+            LOAD_KIND: "water_heater" if router.get("usage") == "water_heater" else "other",
+            LOAD_POWER: load.get(LOAD_POWER) or round(power or 2400),
+            LOAD_POWER_SENSOR: ents.get("routed_power"),
+            LOAD_STATE_ENTITY: None,
+            LOAD_THRESHOLD: 50,
+            LOAD_ENERGY_SENSOR: ents.get("routed_energy_total"),
+            LOAD_WINDOW: None,
+            LOAD_ROUTER: router["device_id"],
+        }
+    )
+    return load
+
+
+def _sync_router_loads(hass, loads: list[dict], routers: list[dict]) -> list[dict]:
+    """Une ligne par routeur retenu ; les lignes des routeurs retirés disparaissent."""
+    wanted = {r["device_id"]: r for r in routers}
+    out, seen = [], set()
+    for load in loads:
+        dev = load.get(LOAD_ROUTER)
+        if dev is None:
+            out.append(load)
+        elif dev in wanted:
+            out.append(_router_load(hass, wanted[dev], load))
+            seen.add(dev)
+    out += [_router_load(hass, r) for dev, r in wanted.items() if dev not in seen]
+    return out
+
+
+def _routers_schema(hass, cur: dict, devices: list[tuple[str, str]], extended: bool = False) -> vol.Schema:
+    chosen = [r["device_id"] for r in cur.get(CONF_ROUTERS) or []]
+    default = [d for d in chosen if d in dict(devices)] if cur.get(CONF_ROUTERS) is not None else [d for d, _ in devices]
+    fields = {
+        vol.Optional(CONF_ROUTERS, default=default): _list(devices, multiple=True),
+        vol.Required(CONF_ROUTER_PRIORITY, default=cur.get(CONF_ROUTER_PRIORITY, DEFAULTS[CONF_ROUTER_PRIORITY])): _choice(
+            ROUTER_PRIORITIES, "router_priority"
+        ),
+    }
+    if extended:
+        fields[vol.Required(CONF_SUMMER_SOC, default=cur.get(CONF_SUMMER_SOC, DEFAULTS[CONF_SUMMER_SOC]))] = _num(50, 100, 1, "%")
+        fields[vol.Required(CONF_ROUTER_DAILY_KWH, default=cur.get(CONF_ROUTER_DAILY_KWH, DEFAULTS[CONF_ROUTER_DAILY_KWH]))] = _num(0.5, 20, 0.5, "kWh")
+    return vol.Schema(fields)
+
+
+def _routers_from_input(devices: list[tuple[str, str]], ids: list[str], previous: list[dict]) -> list[dict]:
+    names = dict(devices)
+    old = {r["device_id"]: r for r in previous or []}
+    return [
+        {"device_id": d, "name": names.get(d, d), "usage": old.get(d, {}).get("usage") or _guess_usage(names.get(d, ""))}
+        for d in ids
+        if d in names
+    ]
 
 
 def _placeholders() -> dict[str, str]:
@@ -269,6 +356,7 @@ def _placeholders() -> dict[str, str]:
         "solar_url": URL_SOLAR,
         "tariff_min": TARIFF_MIN_VERSION,
         "battery_min": BATTERY_MIN_VERSION,
+        "router_url": URL_ROUTER,
     }
 
 
@@ -290,6 +378,11 @@ async def _detection(hass) -> dict[str, str]:
         "tariff_found": _mark(tariff, TARIFF_MIN_VERSION),
         "battery_found": _mark(battery, BATTERY_MIN_VERSION),
         "solar_found": ("✅ " + ", ".join(t for _, t in solar)) if solar else "❌",
+        "router_found": (
+            "✅ " + ", ".join(n for _, n in src.router_devices(hass))
+            if src.router_devices(hass)
+            else ("✅ —" if hass.config_entries.async_entries(ROUTER_DOMAIN) else "—")
+        ),
     }
 
 
@@ -354,12 +447,49 @@ class ChefConfigFlow(ConfigFlow, domain=DOMAIN):
         """3. Rentabilité."""
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_loads()
+            return await self.async_step_routers()
         return self.async_show_form(step_id="profit", data_schema=_profit_schema(self._data))
+
+    async def async_step_routers(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """4. Routeurs solaires : liste directe si ha-routeur-f1atb en a, sinon une question (N5)."""
+        devices = src.router_devices(self.hass)
+        if not devices:
+            if self.hass.config_entries.async_entries(ROUTER_DOMAIN):
+                return await self.async_step_routers_none()
+            return await self.async_step_router_question()
+        if user_input is not None:
+            routers = _routers_from_input(devices, user_input.get(CONF_ROUTERS) or [], [])
+            self._data[CONF_ROUTERS] = routers
+            self._data[CONF_ROUTER_PRIORITY] = user_input[CONF_ROUTER_PRIORITY]
+            self._data["routers_seen"] = [d for d, _ in devices]
+            self._loads = _sync_router_loads(self.hass, self._loads, routers)
+            return await self.async_step_loads()
+        return self.async_show_form(
+            step_id="routers",
+            data_schema=_routers_schema(self.hass, {}, devices),
+            description_placeholders=_placeholders(),
+        )
+
+    async def async_step_routers_none(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return await self.async_step_loads()
+        return self.async_show_form(step_id="routers_none", data_schema=vol.Schema({}), description_placeholders=_placeholders())
+
+    async def async_step_router_question(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return await self.async_step_loads()
+        schema = vol.Schema(
+            {vol.Required("router_kind", default="none"): _choice(["f1atb", "other", "none"], "router_kind")}
+        )
+        return self.async_show_form(step_id="router_question", data_schema=schema, description_placeholders=_placeholders())
 
     async def async_step_loads(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """4. Gros consommateurs (facultatif, un par écran)."""
-        return self.async_show_menu(step_id="loads", menu_options=["load_new", "measure"])
+        return self.async_show_menu(
+            step_id="loads",
+            menu_options=["load_new", "measure"],
+            description_placeholders={"count": str(len(self._loads))},
+        )
 
     async def async_step_load_new(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -399,6 +529,7 @@ class ChefConfigFlow(ConfigFlow, domain=DOMAIN):
             "reserve": f"{float(d.get(CONF_RESERVE_SOC, DEFAULTS[CONF_RESERVE_SOC])):g}",
             "loads": loads or "—",
             "power_sensor": d.get(CONF_POWER_SENSOR) or "—",
+            "routers": ", ".join(r["name"] for r in d.get(CONF_ROUTERS) or []) or "—",
         }
 
     async def async_step_recap(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -411,6 +542,7 @@ class ChefConfigFlow(ConfigFlow, domain=DOMAIN):
             data.setdefault(CONF_PROFILE, DEFAULTS[CONF_PROFILE])
             data.setdefault(CONF_THREE_PHASE, DEFAULTS[CONF_THREE_PHASE])
             data.setdefault(CONF_MARGIN, DEFAULTS[CONF_MARGIN])
+            data.setdefault(CONF_ROUTERS, [])
             for key in OPTIONAL_ENTITIES:
                 data.setdefault(key, None)
             return self.async_create_entry(title="Chef d'orchestre énergie", data=data)
@@ -441,7 +573,7 @@ class ChefOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=["economy", "power", "loads", "sources", "consumption", "notifications", "advanced"],
+            menu_options=["economy", "power", "loads", "routers", "sources", "consumption", "notifications", "advanced"],
         )
 
     async def async_step_economy(self, user_input=None) -> ConfigFlowResult:
@@ -516,9 +648,46 @@ class ChefOptionsFlow(OptionsFlow):
                 vol.Required(CONF_SOLAR_CORRECTION, default=cur[CONF_SOLAR_CORRECTION]): selector.BooleanSelector(),
                 vol.Required(CONF_TEMPO_ASSUMPTION, default=cur[CONF_TEMPO_ASSUMPTION]): _choice(TEMPO_COLORS, "tempo_assumption"),
                 vol.Required(CONF_FINISH_ADVANCE, default=cur[CONF_FINISH_ADVANCE]): _num(0, 120, 5, "min"),
+                vol.Required(CONF_FULL_CHARGE_AUTO, default=cur[CONF_FULL_CHARGE_AUTO]): selector.BooleanSelector(),
+                vol.Required(CONF_FULL_CHARGE_DAYS, default=cur[CONF_FULL_CHARGE_DAYS]): _num(7, 28, 1, "d"),
             }
         )
         return self.async_show_form(step_id="advanced", data_schema=schema)
+
+    # ------------------------------------------------------------ routeurs (N5)
+    async def async_step_routers(self, user_input=None) -> ConfigFlowResult:
+        devices = src.router_devices(self.hass)
+        if not devices:
+            return self.async_abort(reason="no_router")
+        cur = self._cur
+        if user_input is not None:
+            routers = _routers_from_input(devices, user_input.get(CONF_ROUTERS) or [], cur.get(CONF_ROUTERS) or [])
+            self._pending_routers = routers
+            self._pending_changes = {
+                CONF_ROUTER_PRIORITY: user_input[CONF_ROUTER_PRIORITY],
+                CONF_SUMMER_SOC: user_input[CONF_SUMMER_SOC],
+                CONF_ROUTER_DAILY_KWH: user_input[CONF_ROUTER_DAILY_KWH],
+                "routers_seen": sorted(set(cur.get("routers_seen") or []) | {d for d, _ in devices}),
+            }
+            self._usage_index = 0
+            return await self.async_step_router_usage()
+        return self.async_show_form(
+            step_id="routers", data_schema=_routers_schema(self.hass, cur, devices, extended=True)
+        )
+
+    async def async_step_router_usage(self, user_input=None) -> ConfigFlowResult:
+        routers = self._pending_routers
+        if user_input is not None:
+            routers[self._usage_index]["usage"] = user_input["usage"]
+            self._usage_index += 1
+        if self._usage_index >= len(routers):
+            loads = _sync_router_loads(self.hass, self._loads, routers)
+            return self._save({**self._pending_changes, CONF_ROUTERS: routers, CONF_LOADS: loads})
+        router = routers[self._usage_index]
+        schema = vol.Schema({vol.Required("usage", default=router.get("usage", "water_heater")): _choice(ROUTER_USAGES, "router_usage")})
+        return self.async_show_form(
+            step_id="router_usage", data_schema=schema, description_placeholders={"router": router["name"]}
+        )
 
     # ------------------------------------------------------------ gros consommateurs
     @property

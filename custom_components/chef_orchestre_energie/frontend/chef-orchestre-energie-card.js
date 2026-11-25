@@ -7,16 +7,17 @@
  *   type: custom:chef-orchestre-energie-card
  *   show_tariff: true      # blocs masqués par défaut, comme dans la carte Tarifs
  *   show_batteries: true
+ *   show_router: true      # routeurs solaires F1ATB (v1.3.0)
  *   show_plan: true
  *   show_power: true
  *   gauge_warn: 80         # % de la puissance souscrite : jauge orange
  *   gauge_crit: 95         # jauge rouge
  */
-const ENERGY_CARD_VERSION = "1.2.0";
+const ENERGY_CARD_VERSION = "1.3.0";
 const CHEF = "chef_orchestre_energie";
 const TARIFF = "tarifs_electricite";
 const ZENDURE = "zendure_local";
-const BLOCKS = ["show_tariff", "show_batteries", "show_plan", "show_power"];
+const BLOCKS = ["show_tariff", "show_batteries", "show_router", "show_plan", "show_power"];
 
 const ENERGY_I18N = {
   fr: {
@@ -64,7 +65,9 @@ const ENERGY_I18N = {
       solar: "Solaire prévu",
       consumption: "Conso estimée",
       toCharge: "À charger en HC",
-      gap: "Écart après rendement",
+      gap: "Gain par kWh",
+      fullRow: "Charge complète",
+      full: { sun: "Aujourd'hui avec le soleil", tonight: "Cette nuit (calibration)", now: "En cours" },
       threshold: "seuil",
       slot: "Créneau de charge",
       minSoc: "SOC min appliqué",
@@ -82,7 +85,48 @@ const ENERGY_I18N = {
       stopped: "Arrêté",
       unknown: "État inconnu",
       noLoads: "Aucun gros consommateur déclaré.",
+      grid: "Réseau",
       nominal: "max",
+    },
+    info: {
+      gain: "Économie nette sur chaque kWh acheté en heures creuses, stocké dans la batterie puis rendu à l'heure pleine la plus chère de demain, comparée à l'achat de ce kWh en heures pleines. Le prix payé la nuit et les pertes de la batterie sont déjà déduits. La batterie ne charge la nuit que si ce gain atteint le seuil de rentabilité, et seulement s'il manque de l'énergie pour couvrir les heures pleines.",
+      minsoc: "SOC minimum que le Chef d'orchestre impose à chaque batterie pour la nuit. Quand la recharge n'est pas rentable, il passe à la réserve (50 % par défaut) pour ne pas dépenser en heures pleines une énergie qui ne rapporte presque rien. Sinon, c'est votre propre réglage de la batterie, rendu dès que le pilotage est coupé.",
+      margin: "Puissance que la maison peut encore appeler avant d'atteindre la puissance souscrite de votre contrat. La jauge passe à l'orange puis au rouge quand on s'en approche (80 % et 95 % par défaut). La charge des batteries ralentit d'elle-même pour garder au moins 10 % de marge.",
+      full: "D'après le support Zendure, les batteries peuvent lancer une calibration automatique après environ 30 jours sans charge à 100 %. Une charge complète une à deux fois par mois suffit en général à l'éviter : le Chef d'orchestre la programme un jour de soleil ou une nuit d'heures creuses bon marché. Aucune décharge complète n'est provoquée, elle userait la batterie.",
+    },
+    full: {
+      days: (n) => `Charge complète il y a ${n} j`,
+      unknown: "Charge complète : pas encore vue",
+      calibrating: "Calibration en cours",
+      title: "Charge complète",
+      options: [
+        ["auto", "Automatique", "Le Chef d'orchestre choisit un jour de soleil ou une nuit bon marché."],
+        ["next_sun", "Au prochain jour de soleil", "100 % avec les panneaux, sans réseau."],
+        ["tonight", "Cette nuit", "Charge à 100 % pendant les heures creuses."],
+        ["now", "Maintenant", "Charge immédiate, même en heures pleines."],
+        ["skip", "Ignorer pour ce cycle", "Plus de charge programmée ni d'alerte jusqu'à la prochaine charge complète."],
+      ],
+      confirmTitle: "Charger à 100 % maintenant ?",
+      confirmText: (kwh, cost) => `Environ ${kwh} à acheter${cost ? `, soit ${cost} au prix actuel` : ""}.`,
+      confirm: "Confirmer",
+      cancel: "Annuler",
+    },
+    router: {
+      title: "Routeur solaire",
+      open: "Ouvrir la carte du routeur",
+      displayNote: "Réglé dans la carte du routeur",
+      states: {
+        locked: "Verrouillé : batteries d'abord",
+        routing: "Routage solaire",
+        shed: "Délesté : les batteries le chauffaient",
+        on_blocked: "Plage ON bloquée",
+        boost: "Chauffe en heures creuses",
+        hot: "Ballon chaud",
+        offline: "Hors ligne",
+        display_only: "Affichage seulement",
+        autonomous: "En autonome",
+      },
+      usage: { water_heater: "Chauffe-eau", pool: "Piscine", heating: "Chauffage", other: "Autre" },
     },
     settings: "Réglages du Chef d'orchestre",
     close: "Fermer",
@@ -90,6 +134,7 @@ const ENERGY_I18N = {
     editor: {
       show_tariff: "Bloc Tarif en cours",
       show_batteries: "Bloc Batteries",
+      show_router: "Bloc Routeur solaire",
       show_plan: "Bloc Plan pour demain",
       show_power: "Bloc Puissance au tableau",
       gauge_warn: "Jauge orange à partir de (%)",
@@ -141,7 +186,9 @@ const ENERGY_I18N = {
       solar: "Expected solar",
       consumption: "Estimated use",
       toCharge: "To charge off-peak",
-      gap: "Gap after efficiency",
+      gap: "Gain per kWh",
+      fullRow: "Full charge",
+      full: { sun: "Today with the sun", tonight: "Tonight (calibration)", now: "In progress" },
       threshold: "threshold",
       slot: "Charging slot",
       minSoc: "Applied min SOC",
@@ -159,7 +206,48 @@ const ENERGY_I18N = {
       stopped: "Stopped",
       unknown: "Unknown state",
       noLoads: "No large load declared.",
+      grid: "Grid",
       nominal: "max",
+    },
+    info: {
+      gain: "Net saving on each kWh bought off-peak, stored in the battery and given back at tomorrow's most expensive peak hour, compared with buying that kWh at peak price. The night price and battery losses are already deducted. The battery only charges at night if this gain reaches the profitability threshold, and only if energy is missing to cover the peak hours.",
+      minsoc: "Minimum SOC the conductor sets on each battery for the night. When charging is not profitable it is raised to the reserve (50 % by default) so the battery does not spend at peak hours energy that earns almost nothing. Otherwise it is your own battery setting, given back as soon as control is turned off.",
+      margin: "Power the home can still draw before reaching the subscribed power of your contract. The gauge turns orange then red as it gets close (80 % and 95 % by default). Battery charging slows down by itself to keep at least a 10 % margin.",
+      full: "According to Zendure support, the batteries may start an automatic calibration after about 30 days without a 100 % charge. A full charge once or twice a month usually avoids it: the conductor schedules it on a sunny day or a cheap off-peak night. No full discharge is forced, as it would wear the battery.",
+    },
+    full: {
+      days: (n) => `Full charge ${n} d ago`,
+      unknown: "Full charge: not seen yet",
+      calibrating: "Calibrating",
+      title: "Full charge",
+      options: [
+        ["auto", "Automatic", "The conductor picks a sunny day or a cheap night."],
+        ["next_sun", "Next sunny day", "100 % with the panels, no grid."],
+        ["tonight", "Tonight", "Charge to 100 % during off-peak hours."],
+        ["now", "Now", "Immediate charge, even at peak hours."],
+        ["skip", "Skip this cycle", "No scheduled charge or alert until the next full charge."],
+      ],
+      confirmTitle: "Charge to 100 % now?",
+      confirmText: (kwh, cost) => `About ${kwh} to buy${cost ? `, ${cost} at the current price` : ""}.`,
+      confirm: "Confirm",
+      cancel: "Cancel",
+    },
+    router: {
+      title: "Solar router",
+      open: "Open the router card",
+      displayNote: "Set in the router card",
+      states: {
+        locked: "Locked: batteries first",
+        routing: "Solar routing",
+        shed: "Shed: batteries were heating it",
+        on_blocked: "ON slot blocked",
+        boost: "Heating off-peak",
+        hot: "Tank hot",
+        offline: "Offline",
+        display_only: "Display only",
+        autonomous: "Autonomous",
+      },
+      usage: { water_heater: "Water heater", pool: "Pool", heating: "Heating", other: "Other" },
     },
     settings: "Conductor settings",
     close: "Close",
@@ -167,6 +255,7 @@ const ENERGY_I18N = {
     editor: {
       show_tariff: "Current tariff block",
       show_batteries: "Batteries block",
+      show_router: "Solar router block",
       show_plan: "Plan for tomorrow block",
       show_power: "Panel power block",
       gauge_warn: "Gauge orange from (%)",
@@ -188,7 +277,7 @@ class ChefOrchestreEnergieCard extends HTMLElement {
     return document.createElement("chef-orchestre-energie-card-editor");
   }
   static getStubConfig() {
-    return { show_tariff: true, show_batteries: true, show_plan: true, show_power: true };
+    return { show_tariff: true, show_batteries: true, show_router: true, show_plan: true, show_power: true };
   }
   setConfig(config) {
     this._config = { ...(config || {}) };
@@ -256,6 +345,13 @@ class ChefOrchestreEnergieCard extends HTMLElement {
   _state(id) {
     return id ? this._hass.states[id] : undefined;
   }
+  /* toutes les entités du Chef d'orchestre d'une clé (une par batterie ou par routeur) */
+  _chefByKey(all, key) {
+    return all.filter((e) => e.platform === CHEF && e.translation_key === key).map((e) => e.entity_id);
+  }
+  _chefForDevice(all, key, deviceId) {
+    return this._chefByKey(all, key).find((id) => this._state(id)?.attributes?.device_id === deviceId);
+  }
   _ok(st) {
     return st && !BAD.has(String(st.state));
   }
@@ -308,6 +404,7 @@ class ChefOrchestreEnergieCard extends HTMLElement {
       this._header(ctx),
       c.show_tariff ? this._tariff(ctx) : "",
       c.show_batteries ? this._batteries(ctx) : "",
+      c.show_router ? this._router(ctx) : "",
       c.show_plan ? this._plan(ctx) : "",
       c.show_power ? this._power(ctx) : "",
       this._footer(),
@@ -327,8 +424,17 @@ class ChefOrchestreEnergieCard extends HTMLElement {
     </div>`;
   }
 
-  _section(icon, title, body, action) {
-    return `<section><div class="sh"><ha-icon icon="${icon}"></ha-icon><span>${eEsc(title)}</span></div>${body}${action || ""}</section>`;
+  _section(icon, title, body, action, toggle) {
+    return `<section><div class="sh"><ha-icon icon="${icon}"></ha-icon><span class="grow">${eEsc(title)}</span>${toggle || ""}</div>${body}${action || ""}</section>`;
+  }
+  _info(key) {
+    return `<button class="ibtn ${this._openInfo === key ? "open" : ""}" data-act="info" data-key="${eEsc(key)}" aria-label="Information" aria-expanded="${this._openInfo === key}">i</button>`;
+  }
+  _bubble(key, text, cls = "") {
+    return this._openInfo === key ? `<div class="bubble ${cls}">${eEsc(text)}</div>` : "";
+  }
+  _mini(act, on, disabled, key = "", label = "") {
+    return `<button class="mini ${on ? "on" : ""}" data-act="${act}" data-key="${eEsc(key)}" role="switch" aria-checked="${on}" aria-label="${eEsc(label)}" ${disabled ? "disabled" : ""}><span class="knob"></span></button>`;
   }
   _action(act, icon, label) {
     return `<button class="act" data-act="${act}"><ha-icon icon="${icon}"></ha-icon><span>${eEsc(label)}</span><ha-icon class="chev" icon="mdi:chevron-right"></ha-icon></button>`;
@@ -393,7 +499,12 @@ class ChefOrchestreEnergieCard extends HTMLElement {
   }
   _batteries(ctx) {
     const t = this._t.bat;
-    const { on, batteryOk, watched, ents } = ctx;
+    const { on, batteryOk, watched, ents, pa } = ctx;
+    const batSw = this._state(ents.chef.battery_control);
+    watched.push(ents.chef.battery_control);
+    const batOn = batSw ? batSw.state === "on" : true;
+    const piloted = on && batOn;
+    const toggle = batSw ? this._mini("bat_toggle", piloted, !on, "", t.title) : "";
     if (!batteryOk) return this._section("mdi:home-battery", t.title, this._warn(t.missing));
     const { main, ids } = this._devices(ctx);
     if (!main) return this._section("mdi:home-battery", t.title, this._warn(t.missing));
@@ -416,11 +527,24 @@ class ChefOrchestreEnergieCard extends HTMLElement {
       const lo = this._state(u.min_soc);
       const hi = this._state(u.soc_set);
       const pct = (st) => (this._ok(st) ? `${this._n(st.state, 0)} %` : "—");
+      const fullId = this._chefForDevice(ents.all, "full_charge_days", id);
+      watched.push(fullId);
+      const full = this._state(fullId);
+      let fullLine = "";
+      if (full) {
+        const ft = this._t.full;
+        const days = this._ok(full) ? Math.floor(eNum(full.state)) : null;
+        const thr = eNum(full.attributes.threshold_days) ?? 20;
+        const label = full.attributes.calibrating ? ft.calibrating : days === null ? ft.unknown : ft.days(days);
+        const late = full.attributes.calibrating || (days !== null && days >= thr);
+        fullLine = `<span class="ufull"><button class="fulllink ${late ? "late" : ""}" data-act="fullmenu">${eEsc(label)}<ha-icon icon="mdi:chevron-down"></ha-icon></button>${this._info("full_" + id)}</span>${this._bubble("full_" + id, this._t.info.full, "span2")}`;
+      }
       return `<div class="unit">
         <span class="uname">${eEsc(this._deviceName(id))}</span>
         <span class="usoc">${this._ok(s) ? this._n(s.state, 0) + " %" : eEsc(this._t.unavailable)}</span>
         <span class="upow">${eEsc(this._ok(p) ? this._flow(p.state) : this._t.unavailable)}</span>
         <span class="ulim">${eEsc(t.min)} ${pct(lo)} · ${eEsc(t.max)} ${pct(hi)}</span>
+        ${fullLine}
       </div>`;
     });
     const body = `<div class="bat">
@@ -428,11 +552,39 @@ class ChefOrchestreEnergieCard extends HTMLElement {
         <div class="rows">
           <div class="row"><span>${eEsc(units.length ? t.group : this._deviceName(main))}</span><b>${eEsc(this._ok(pw) ? this._flow(pw.state) : this._t.unavailable)}</b></div>
           <div class="row"><span>${eEsc(t.mode)}</span><b>${eEsc(modeTxt)}</b></div>
-          <div class="note ${on ? "piloted" : ""}"><ha-icon icon="${on ? "mdi:robot-outline" : "mdi:hand-back-right-outline"}"></ha-icon>${eEsc(on ? t.piloted : t.manual)}</div>
+          <div class="note ${piloted ? "piloted" : ""}"><ha-icon icon="${piloted ? "mdi:robot-outline" : "mdi:hand-back-right-outline"}"></ha-icon>${eEsc(piloted ? t.piloted : t.manual)}</div>
         </div>
       </div>
       ${rows.length ? `<div class="units">${rows.join("")}</div>` : ""}`;
-    return this._section("mdi:home-battery", t.title, body, this._action("zendure", "mdi:open-in-new", t.open));
+    return this._section("mdi:home-battery", t.title, body, this._action("zendure", "mdi:open-in-new", t.open), toggle);
+  }
+
+  /* ---- Routeurs solaires F1ATB (N5, N6) */
+  _router({ pa, on, ents, watched }) {
+    const r = this._t.router;
+    const list = Array.isArray(pa.routers) ? pa.routers : [];
+    if (!list.length) return "";
+    const lines = list.map((x) => {
+      const swId = this._chefForDevice(ents.all, "router_control", x.device_id);
+      watched.push(swId);
+      const sw = this._state(swId);
+      const switchOn = sw ? sw.state === "on" : x.switch_on;
+      const display = x.state === "display_only";
+      const tone = { routing: "good", hot: "good", locked: "blue", boost: "warn", shed: "warn", on_blocked: "blue" }[x.state] || "muted";
+      const state = r.states[x.state] || x.state;
+      const disabled = !on || !x.online || display || !swId;
+      return `<div class="rline ${x.online ? "" : "offline"}">
+        <div class="rhead"><span class="rname">${eEsc(x.name)}</span><span class="muted small">${eEsc(r.usage[x.usage] || x.usage || "")}</span><span class="grow"></span>${this._mini("router_toggle", on && switchOn && !display, disabled, swId || "", x.name)}</div>
+        <div class="rbody">
+          ${x.temperature != null ? `<span class="rtemp">${this._n(x.temperature, 0)} °C</span>` : ""}
+          <span class="rpow">${x.online && x.routed_power != null ? eEsc(this._w(x.routed_power)) : "—"}</span>
+          <span class="chip small ${tone}">${eEsc(state)}</span>
+          <button class="icon open" data-act="routercard" data-key="${eEsc(x.device_id)}" aria-label="${eEsc(r.open)}"><ha-icon icon="mdi:open-in-new"></ha-icon></button>
+        </div>
+        ${display ? `<div class="note">${eEsc(r.displayNote)}</div>` : ""}
+      </div>`;
+    });
+    return this._section("mdi:water-boiler", r.title, `<div class="routers">${lines.join("")}</div>`);
   }
 
   /* ---- Plan pour demain (Chef d'orchestre) */
@@ -459,13 +611,14 @@ class ChefOrchestreEnergieCard extends HTMLElement {
       [t.solar, this._kwh(val("forecast_solar")?.state)],
       [t.consumption, this._kwh(val("forecast_consumption")?.state)],
       [t.toCharge, paused ? "—" : this._kwh(val("energy_to_charge")?.state)],
-      [t.gap, gapTxt, gap !== null && thr !== null && pa.tariff_ok !== false ? (gap >= thr ? "good" : "bad") : ""],
+      [t.gap, gapTxt, gap !== null && thr !== null && pa.tariff_ok !== false ? (gap >= thr ? "good" : "bad") : "", "gain"],
       [t.slot, slot],
-      [t.minSoc, minTxt],
+      [t.minSoc, minTxt, "", "minsoc"],
+      ...(pa.full_charge_planned && on && t.full[pa.full_charge_planned] ? [[t.fullRow, t.full[pa.full_charge_planned], "warn"]] : []),
     ];
     const body = `<div class="verdict ${tone}">${eEsc(label)}</div>
       <div class="rows">${rows
-        .map(([k, v, cls]) => `<div class="row"><span>${eEsc(k)}</span><b class="${cls || ""}">${eEsc(v)}</b></div>`)
+        .map(([k, v, cls, info]) => `<div class="row"><span class="lab">${eEsc(k)}${info ? this._info(info) : ""}</span><b class="${cls || ""}">${eEsc(v)}</b></div>${info ? this._bubble(info, this._t.info[info]) : ""}`)
         .join("")}
       ${pa.full_charge && on ? `<div class="note piloted"><ha-icon icon="mdi:white-balance-sunny"></ha-icon>${eEsc(t.fullCharge)}</div>` : ""}
       </div>`;
@@ -496,7 +649,7 @@ class ChefOrchestreEnergieCard extends HTMLElement {
           <div class="tick" style="left:${warn}%"></div><div class="tick" style="left:${crit}%"></div>
         </div>`);
       if (!kva) parts.push(this._warn(t.noKva));
-      else if (a.margin_w != null) parts.push(`<div class="rows"><div class="row"><span>${eEsc(t.margin)}</span><b class="${level === "ok" ? "" : level}">${eEsc(this._w(a.margin_w))}</b></div></div>`);
+      else if (a.margin_w != null) parts.push(`<div class="rows"><div class="row"><span class="lab">${eEsc(t.margin)}${this._info("margin")}</span><b class="${level === "ok" ? "" : level}">${eEsc(this._w(a.margin_w))}</b></div>${this._bubble("margin", this._t.info.margin)}</div>`);
     }
     const loads = Array.isArray(a.loads) ? a.loads : [];
     if (loads.length) {
@@ -506,7 +659,7 @@ class ChefOrchestreEnergieCard extends HTMLElement {
             const state = l.running === true ? t.running : l.running === false ? t.stopped : t.unknown;
             const measured = l.current_w != null;
             const pw = this._w(measured ? l.current_w : l.power_w);
-            return `<div class="load ${l.running ? "run" : ""}"><span class="dot"></span><span class="lname">${eEsc(l.name)}</span><span class="muted">${eEsc(state)}</span><b class="${measured ? "" : "nominal"}">${eEsc(measured ? pw : `${t.nominal} ${pw}`)}</b></div>`;
+            return `<div class="load ${l.running ? "run" : ""}"><span class="dot"></span><span class="lname">${eEsc(l.name)}${l.battery === false ? `<span class="chip small ghost">${eEsc(t.grid)}</span>` : ""}</span><span class="muted">${eEsc(state)}</span><b class="${measured ? "" : "nominal"}">${eEsc(measured ? pw : `${t.nominal} ${pw}`)}</b></div>`;
           })
           .join("")}</div>`
       );
@@ -547,6 +700,24 @@ class ChefOrchestreEnergieCard extends HTMLElement {
       this._open("chef-orchestre-card", { type: "custom:chef-orchestre-card", show_chart: true, show_modes: true, show_settings: true }, this._t.plan.title);
     } else if (act === "close") {
       this._close();
+    } else if (act === "info") {
+      this._openInfo = this._openInfo === btn.dataset.key ? null : btn.dataset.key;
+      this._render();
+    } else if (act === "bat_toggle" && ents.chef.battery_control) {
+      const st = this._state(ents.chef.battery_control);
+      this._hass.callService("switch", st?.state === "on" ? "turn_off" : "turn_on", { entity_id: ents.chef.battery_control });
+    } else if (act === "router_toggle" && btn.dataset.key) {
+      const st = this._state(btn.dataset.key);
+      this._hass.callService("switch", st?.state === "on" ? "turn_off" : "turn_on", { entity_id: btn.dataset.key });
+    } else if (act === "routercard") {
+      this._open("f1atb-routeur-card", { type: "custom:f1atb-routeur-card", device_id: btn.dataset.key }, this._t.router.title);
+    } else if (act === "fullmenu") {
+      this._menu(ents);
+    } else if (act === "pick") {
+      if (btn.dataset.key === "now") this._confirmNow(ents, plan);
+      else this._pick(ents, btn.dataset.key);
+    } else if (act === "confirm_now") {
+      this._pick(ents, "now");
     }
   }
   _open(tag, config, title) {
@@ -573,6 +744,33 @@ class ChefOrchestreEnergieCard extends HTMLElement {
     this._onKey = (e) => e.key === "Escape" && this._close();
     window.addEventListener("keydown", this._onKey);
     pop.querySelector(".dialog button")?.focus();
+  }
+  _pick(ents, option) {
+    if (ents.chef.full_charge) this._hass.callService("select", "select_option", { entity_id: ents.chef.full_charge, option });
+    this._close();
+  }
+  _menu(ents) {
+    const pop = this.shadowRoot.getElementById("pop");
+    const f = this._t.full;
+    const current = this._state(ents.chef.full_charge)?.state || "auto";
+    pop.innerHTML = `<div class="overlay" data-act="close"></div>
+      <div class="dialog sheet" role="dialog" aria-modal="true" aria-label="${eEsc(f.title)}">
+        <div class="dh"><span>${eEsc(f.title)}</span><button class="icon" data-act="close" aria-label="${eEsc(this._t.close)}"><ha-icon icon="mdi:close"></ha-icon></button></div>
+        <div class="dbody opts" role="radiogroup">${f.options
+          .map(([k, label, desc]) => `<button class="opt ${k === current ? "sel" : ""}" role="radio" aria-checked="${k === current}" data-act="pick" data-key="${k}"><span class="radio"></span><span><b>${eEsc(label)}</b><span class="muted small">${eEsc(desc)}</span></span></button>`)
+          .join("")}</div>
+      </div>`;
+    this._onKey = (e) => e.key === "Escape" && this._close();
+    window.addEventListener("keydown", this._onKey);
+  }
+  _confirmNow(ents, plan) {
+    const pop = this.shadowRoot.getElementById("pop");
+    const f = this._t.full;
+    const a = plan?.attributes || {};
+    const kwh = a.full_charge_now_kwh != null ? this._kwh(a.full_charge_now_kwh) : "—";
+    const cost = a.full_charge_now_cost != null ? `${this._n(a.full_charge_now_cost, 2)} €` : null;
+    pop.querySelector(".dbody").innerHTML = `<div class="confirm"><b>${eEsc(f.confirmTitle)}</b><p class="muted">${eEsc(f.confirmText(kwh, cost))}</p>
+      <div class="btns"><button class="act ghostbtn" data-act="close">${eEsc(f.cancel)}</button><button class="act" data-act="confirm_now">${eEsc(f.confirm)}</button></div></div>`;
   }
   _close() {
     const pop = this.shadowRoot?.getElementById("pop");
@@ -663,6 +861,51 @@ b.nominal{font-weight:400;color:var(--secondary-text-color)}
 .act span{flex:1}
 .act ha-icon{--mdc-icon-size:20px}
 .foot{margin-top:16px}
+.grow{flex:1}
+.lab{display:inline-flex;align-items:center;gap:6px}
+.ibtn{position:relative;width:20px;height:20px;border-radius:50%;border:1.5px solid currentColor;font:600 12px/1 Georgia,serif;font-style:italic;
+  color:var(--secondary-text-color);display:inline-flex;align-items:center;justify-content:center;padding:0;flex:none}
+.ibtn::after{content:"";position:absolute;inset:-12px}
+.ibtn.open{color:var(--primary-color);background:color-mix(in srgb,var(--primary-color) 14%,transparent)}
+.bubble{margin:2px 0 6px;padding:10px 12px;border-radius:10px;font-size:.86rem;line-height:1.45;
+  background:color-mix(in srgb,var(--primary-color) 10%,transparent);color:var(--primary-text-color)}
+.bubble.span2{grid-column:1/-1}
+.mini{position:relative;width:44px;height:26px;border-radius:13px;background:var(--disabled-color,#9e9e9e);padding:0;flex:none;transition:background .2s}
+.mini .knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .2s}
+.mini.on{background:var(--primary-color)}
+.mini.on .knob{left:21px}
+.mini::after{content:"";position:absolute;inset:-9px 0}
+.ufull{grid-column:1/-1;display:flex;align-items:center;gap:8px;margin-top:2px}
+.fulllink{display:inline-flex;align-items:center;gap:2px;font-size:.85rem;color:var(--secondary-text-color);padding:6px 0;min-height:32px}
+.fulllink ha-icon{--mdc-icon-size:16px}
+.fulllink.late{color:var(--warning-color,#ffa000);font-weight:500}
+b.warn{color:var(--warning-color,#ffa000)}
+.chip.small{min-height:22px;padding:0 8px;font-size:.78rem;border-radius:11px}
+.lname .chip.small{margin-left:6px}
+.chip.good{background:color-mix(in srgb,var(--success-color,#43a047) 20%,transparent);color:var(--success-color,#43a047)}
+.chip.blue{background:color-mix(in srgb,var(--primary-color) 16%,transparent);color:var(--primary-color)}
+.chip.warn{background:color-mix(in srgb,var(--warning-color,#ffa000) 18%,transparent);color:var(--warning-color,#ffa000)}
+.chip.muted{background:color-mix(in srgb,var(--secondary-text-color) 16%,transparent);color:var(--secondary-text-color)}
+.routers{display:flex;flex-direction:column;gap:8px}
+.rline{padding:8px 10px;border-radius:10px;background:color-mix(in srgb,var(--secondary-text-color) 8%,transparent)}
+.rline.offline{opacity:.6}
+.rhead{display:flex;align-items:center;gap:8px}
+.rname{font-weight:500}
+.rbody{display:flex;align-items:center;gap:12px;margin-top:4px;flex-wrap:wrap}
+.rtemp{font-size:1.15rem;font-weight:500}
+.rpow{color:var(--secondary-text-color)}
+.rbody .open{margin-left:auto;color:var(--primary-color)}
+.opts{display:flex;flex-direction:column;padding:6px 8px 14px}
+.opt{display:flex;gap:12px;align-items:flex-start;text-align:left;padding:12px 10px;border-radius:10px;min-height:44px}
+.opt b{display:block;font-weight:500;margin-bottom:2px}
+.opt .radio{flex:none;width:18px;height:18px;margin-top:2px;border-radius:50%;border:2px solid var(--secondary-text-color)}
+.opt.sel{background:color-mix(in srgb,var(--primary-color) 10%,transparent)}
+.opt.sel .radio{border-color:var(--primary-color);box-shadow:inset 0 0 0 3px var(--card-background-color,#fff),inset 0 0 0 10px var(--primary-color)}
+.confirm{padding:8px 10px 14px}
+.confirm p{margin:6px 0 12px}
+.btns{display:flex;gap:10px}
+.btns .act{margin-top:0;justify-content:center;text-align:center}
+.ghostbtn{background:color-mix(in srgb,var(--secondary-text-color) 12%,transparent);color:var(--primary-text-color)}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:8}
 .dialog{position:fixed;z-index:9;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,calc(100vw - 16px));
   max-height:calc(100vh - 32px);overflow:auto;border-radius:16px;background:var(--card-background-color,#fff);

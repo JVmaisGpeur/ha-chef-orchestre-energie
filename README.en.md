@@ -20,7 +20,9 @@ Every evening it answers three questions:
 | [ha-zendure-solarflow-local](https://github.com/JVmaisGpeur/ha-zendure-solarflow-local) | ≥ 1.3.0 | Battery or battery Group to drive |
 | A solar forecast | – | Forecast.Solar, Open-Meteo Solar Forecast or Solcast |
 | The Home Assistant Energy dashboard (recommended) | – | The house consumption is learned from it with nothing to enter |
-| A panel power sensor (optional) | – | For example Shelly Pro 3EM, for the Energy card gauge |
+| A panel power sensor (optional) | – | For example Shelly Pro 3EM, for the Energy card gauge and router unlocking |
+| [ha-zendure-solarflow-local](https://github.com/JVmaisGpeur/ha-zendure-solarflow-local) ≥ 1.6.0 (optional) | – | Charge/discharge ceilings, power not to cover, calibration: excluded loads and router |
+| [ha-routeur-f1atb](https://github.com/JVmaisGpeur/ha-routeur-f1atb) ≥ 1.0.0 (optional) | – | F1ATB solar router to drive |
 
 With Forecast.Solar, add one entry per panel orientation: the conductor adds them up hour by hour, like the Energy dashboard.
 
@@ -131,6 +133,29 @@ It shows tonight's plan and its reason, the key figures (energy to charge, targe
 ## Large appliances
 
 Water heater, heat pump, EV… declared in the options with their power and, if possible, a power sensor or on/off entity, an energy sensor and a usual time window (`23:00-02:00`). They are **never switched off**: they are used to bring the charge start forward and to warn you if they may exceed the subscribed power. Power is entered in kW.
+
+**Powered by the batteries** (yes by default): set "no" so a device, for example the water heater, is never powered by the batteries. While it runs, the conductor gives its power to Zendure ("Power not to cover"): the batteries cover the rest of the home, the device takes the sun or the grid. Its energy also leaves the need the evening plan asks the batteries to cover. Needs ha-zendure-solarflow-local 1.6.0 or newer and a running detection sensor.
+
+## F1ATB solar router
+
+With [ha-routeur-f1atb](https://github.com/JVmaisGpeur/ha-routeur-f1atb), the conductor arbitrates between the water tank and the batteries. If that integration already has routers, the setup lists them directly, ticked: untick the ones not to drive. Each router kept becomes a large load the batteries do not power.
+
+- **Batteries always first** (default): the router is locked (30-minute forced stop, renewed) while the batteries can take the surplus. It is released, after 2 minutes, when they are full or charging at 95 % or more of their maximum power with surplus going to the grid; it is locked again as soon as they discharge or their charge drops below 80 %.
+- **Router first**: the tank heats first; the batteries only charge what it does not absorb, until it is hot.
+- During a router ON slot (off-peak heating), the batteries do not discharge. The slot is blocked if the tank is already hot or tomorrow's sun is enough.
+- If the batteries discharge while the router heats for more than 2 minutes, the router is shed (summer exception: batteries above 90 % and enough sun tomorrow).
+- The router Pw threshold is checked every hour: it must be at least 20 W below the battery target (for example −20 W).
+- Never a permanent write into the router; it only takes control with your agreement. Router offline, or set to "Display only" in its card: no command, and protection goes through Zendure's power not to cover.
+
+## Full charge and calibration
+
+According to Zendure support, the batteries may start an automatic charge-level calibration after about 30 days without a 100 % charge. It tries to fill the battery, with the sun or else the grid, and may stop and resume. A 100 % charge once or twice a month usually avoids it; a full discharge is not maintenance and wears the battery; during a calibration, keep the device powered, with a 100 % charge limit and no output power blocked at 0 W. If a calibration stays stuck, contact Zendure support (model, serial number, versions, SOC history).
+
+The conductor counts the days since each battery's last full charge ("Full charge" sensor). From 20 days (adjustable in Advanced), it schedules a 100 % charge: a sunny day if the forecast is enough, otherwise the cheapest off-peak night, avoiding the eve of a white or red Tempo day. During a calibration it lets it finish. The "Full charge" list (card, entity, `chef_orchestre_energie.full_charge` service) lets you choose: Automatic, Next sunny day, Tonight, Now, Skip this cycle.
+
+## Choosing what is driven
+
+The main "Automatic control" switch stops everything. Below it, "Battery control" and one "Router control" per router let you leave a part autonomous; turned back on, the main switch restores those choices.
 
 ## Notifications
 

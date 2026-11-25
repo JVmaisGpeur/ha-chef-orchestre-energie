@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Detection",
-        "description": "Integrations found on your Home Assistant:\n\n- Battery — ha-zendure-solarflow-local (required, ≥ {battery_min}): {battery_found}\n- Solar forecast (required): {solar_found}\n- Tariffs — ha-tarifs-electricite (recommended, ≥ {tariff_min}): {tariff_found}\n\nWithout Electricity Tariffs the conductor installs but does not drive anything: it needs prices and off-peak hours ({tariff_url}). Everything else (subscribed power, offer, prices, off-peak hours, battery modes and SOC) is read from these integrations: nothing to enter again."
+        "description": "Integrations found on your Home Assistant:\n\n- Battery — ha-zendure-solarflow-local (required, ≥ {battery_min}): {battery_found}\n- Solar forecast (required): {solar_found}\n- Tariffs — ha-tarifs-electricite (recommended, ≥ {tariff_min}): {tariff_found}\n- Solar router — ha-routeur-f1atb (optional): {router_found}\n\nWithout Electricity Tariffs the conductor installs but does not drive anything: it needs prices and off-peak hours ({tariff_url}). Everything else (subscribed power, offer, prices, off-peak hours, battery modes and SOC) is read from these integrations: nothing to enter again."
       },
       "sources": {
         "title": "Sources",
@@ -44,11 +44,13 @@
           "power_kw": "Power",
           "power_sensor": "Power sensor (running detection)",
           "state_entity": "On/off entity (running detection)",
-          "add_another": "Add another one next"
+          "add_another": "Add another one next",
+          "battery_powered": "Powered by the batteries"
         },
         "data_description": {
           "power_kw": "Rated power in kW, for example 3 for a 3,000 W water heater.",
-          "power_sensor": "Optional: tells whether it is running."
+          "power_sensor": "Optional: tells whether it is running.",
+          "battery_powered": "No: the batteries do not cover its power while it runs (it takes the grid or the sun). Needs ha-zendure-solarflow-local 1.6.0 or newer and a running detection sensor."
         }
       },
       "measure": {
@@ -60,12 +62,34 @@
       },
       "recap": {
         "title": "Summary",
-        "description": "- Tariffs: {tariff}\n- Battery: {battery}\n- Solar forecast: {solar}\n- Profitability threshold: {threshold} €/kWh, efficiency {efficiency} %, reserve {reserve} %\n- Large loads: {loads}\n- Panel power: {power_sensor}\n\nEverything can be changed later in Configure.",
+        "description": "- Tariffs: {tariff}\n- Battery: {battery}\n- Solar forecast: {solar}\n- Profitability threshold: {threshold} €/kWh, efficiency {efficiency} %, reserve {reserve} %\n- Large loads: {loads}\n- Panel power: {power_sensor}\n- Solar routers: {routers}\n\nEverything can be changed later in Configure.",
         "data": {
           "auto_start": "Turn control on now"
         },
         "data_description": {
           "auto_start": "Leave ticked so the conductor drives the battery from tonight. Otherwise it computes the plan without driving anything."
+        }
+      },
+      "routers": {
+        "title": "Solar routers",
+        "description": "F1ATB routers found in ha-routeur-f1atb. Untick the ones the conductor must not drive: confirming means you agree it takes control of them. Each router kept becomes a large load that the batteries do not power.",
+        "data": {
+          "routers": "Routers to drive",
+          "router_priority": "Solar surplus priority"
+        },
+        "data_description": {
+          "router_priority": "Batteries first: the router only gets the surplus when the batteries are full or charging at their maximum. Router first: the water tank heats first, the batteries take the rest."
+        }
+      },
+      "routers_none": {
+        "title": "Solar routers",
+        "description": "ha-routeur-f1atb is installed but no router is added in it. Add your routers in that integration, then come back to Configure → Solar routers."
+      },
+      "router_question": {
+        "title": "Solar router",
+        "description": "Do you have a solar router for the water heater? For an F1ATB router, first install ha-routeur-f1atb ({router_url}): the conductor can then drive it. For another router, simply declare the water heater as a large load in the next step.",
+        "data": {
+          "router_kind": "Your router"
         }
       }
     },
@@ -90,7 +114,8 @@
           "sources": "Sources",
           "loads": "Large appliances",
           "notifications": "Notifications",
-          "advanced": "Advanced"
+          "advanced": "Advanced",
+          "routers": "Solar routers"
         }
       },
       "economy": {
@@ -169,10 +194,13 @@
           "history_weeks": "Weeks of history learned",
           "solar_correction": "Learn a solar correction factor",
           "tempo_assumption": "Assumed Tempo colour while tomorrow's is unknown",
-          "finish_advance": "Finish charging before the end of off-peak hours by"
+          "finish_advance": "Finish charging before the end of off-peak hours by",
+          "full_charge_auto": "Anticipate battery calibration",
+          "full_charge_days": "Full charge scheduled after"
         },
         "data_description": {
-          "solar_correction": "Needs the actual solar production sensor (Consumption)."
+          "solar_correction": "Needs the actual solar production sensor (Consumption).",
+          "full_charge_days": "Days without a 100 % charge before a full charge is scheduled (20 by default). According to Zendure support, an automatic calibration may start after about 30 days."
         }
       },
       "loads": {
@@ -203,10 +231,31 @@
           "kind": "Type",
           "power_sensor": "Power sensor (running detection)",
           "state_entity": "On/off entity (running detection)",
-          "power_kw": "Power"
+          "power_kw": "Power",
+          "battery_powered": "Powered by the batteries"
         },
         "data_description": {
-          "power_kw": "Rated power in kW."
+          "power_kw": "Rated power in kW.",
+          "battery_powered": "No: the batteries do not cover its power while it runs (it takes the grid or the sun). Needs ha-zendure-solarflow-local 1.6.0 or newer and a running detection sensor."
+        }
+      },
+      "routers": {
+        "title": "Solar routers",
+        "data": {
+          "routers": "Routers to drive",
+          "router_priority": "Solar surplus priority",
+          "summer_soc": "Summer exception: battery SOC from which the router is not shed",
+          "router_daily_kwh": "Daily need of the water tank (if history is missing)"
+        },
+        "data_description": {
+          "summer_soc": "Above it, and if tomorrow's sun is enough to recharge the batteries, monitoring lets the router heat (90 % by default)."
+        }
+      },
+      "router_usage": {
+        "title": "Router use",
+        "description": "Use of {router}.",
+        "data": {
+          "usage": "Use"
         }
       }
     },
@@ -215,6 +264,9 @@
       "battery_version": "ha-zendure-solarflow-local {battery_min} or newer is required.",
       "no_solar_selected": "Select at least one solar forecast.",
       "gauge_order": "The critical threshold must be higher than the warning threshold."
+    },
+    "abort": {
+      "no_router": "No router in ha-routeur-f1atb. Add your routers in that integration, then come back here."
     }
   },
   "selector": {
@@ -245,6 +297,36 @@
         "heat_pump": "Heat pump",
         "ev": "Electric vehicle",
         "other": "Other"
+      }
+    },
+    "router_priority": {
+      "options": {
+        "battery_first": "Batteries always first",
+        "router_first": "Router first, until the tank is hot"
+      }
+    },
+    "router_kind": {
+      "options": {
+        "f1atb": "F1ATB router",
+        "other": "Other router",
+        "none": "No router"
+      }
+    },
+    "router_usage": {
+      "options": {
+        "water_heater": "Water heater",
+        "pool": "Pool",
+        "heating": "Heating",
+        "other": "Other"
+      }
+    },
+    "full_charge_when": {
+      "options": {
+        "auto": "Automatic",
+        "next_sun": "Next sunny day",
+        "tonight": "Tonight",
+        "now": "Now",
+        "skip": "Skip this cycle"
       }
     }
   },
@@ -315,11 +397,20 @@
       },
       "board_power": {
         "name": "Panel power"
+      },
+      "full_charge_days": {
+        "name": "Full charge {battery}"
       }
     },
     "switch": {
       "auto_control": {
         "name": "Automatic control"
+      },
+      "battery_control": {
+        "name": "Battery control"
+      },
+      "router_control": {
+        "name": "Router control {router}"
       }
     },
     "select": {
@@ -329,6 +420,16 @@
           "cautious": "Cautious",
           "balanced": "Balanced",
           "economical": "Economical"
+        }
+      },
+      "full_charge": {
+        "name": "Full charge",
+        "state": {
+          "auto": "Automatic",
+          "next_sun": "Next sunny day",
+          "tonight": "Tonight",
+          "now": "Now",
+          "skip": "Skip this cycle"
         }
       }
     },
@@ -379,6 +480,18 @@
     "reserve_unavailable": {
       "title": "SOC reserve cannot be applied",
       "description": "The conductor cannot find the min SOC and max SOC settings of the batteries. Update ha-zendure-solarflow-local: without them, the 50 % reserve and the switch to 100 % on sunny days are disabled; the rest of the control works."
+    },
+    "full_charge_late": {
+      "title": "Battery full charge overdue",
+      "description": "The batteries have not been charged to 100 % for {days} days and no sunny day or favourable night is expected. According to Zendure support, an automatic calibration may start around 30 days. Choose \"Full charge → Tonight\" in the Energy card, or let it be."
+    },
+    "router_found": {
+      "title": "Solar router available",
+      "description": "ha-routeur-f1atb offers routers the conductor does not drive yet: {routers}. To add them, open Configure → Solar routers. The conductor never takes control without your agreement."
+    },
+    "router_threshold": {
+      "title": "Router threshold to fix",
+      "description": "The routing threshold (Pw) must be at least 20 W below the battery target (0 W), for example −20 W; otherwise the batteries keep powering the water tank. Fix it in the router interface: {routers}."
     }
   },
   "exceptions": {
@@ -402,6 +515,15 @@
     },
     "notify_charge_unfinished": {
       "message": "Tonight's charge stopped at {soc} % instead of {target} %."
+    },
+    "notify_full_charge_sun": {
+      "message": "Full charge planned with the sun for {batteries}: max SOC at 100 % today, to avoid the automatic calibration."
+    },
+    "notify_full_charge_tonight": {
+      "message": "Full charge planned tonight during off-peak hours for {batteries}, to avoid the automatic calibration."
+    },
+    "notify_full_charge_now": {
+      "message": "Full charge in progress for {batteries}, as requested."
     }
   },
   "services": {
@@ -430,6 +552,20 @@
         "target_soc": {
           "name": "Target state of charge",
           "description": "For a charge; maximum SOC if empty."
+        }
+      }
+    },
+    "full_charge": {
+      "name": "Full charge",
+      "description": "Schedules a 100 % battery charge (anticipates the automatic calibration).",
+      "fields": {
+        "config_entry_id": {
+          "name": "Instance",
+          "description": "Leave empty for all."
+        },
+        "when": {
+          "name": "When",
+          "description": "auto, next_sun, tonight, now or skip."
         }
       }
     }

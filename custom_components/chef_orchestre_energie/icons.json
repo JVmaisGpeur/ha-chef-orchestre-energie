@@ -12,25 +12,90 @@
           "missing_data": "mdi:alert-circle-outline"
         }
       },
-      "energy_to_charge": { "default": "mdi:battery-arrow-up" },
-      "target_soc": { "default": "mdi:battery-high" },
-      "charge_start": { "default": "mdi:clock-start" },
-      "forecast_consumption": { "default": "mdi:home-lightning-bolt-outline" },
-      "peak_need": { "default": "mdi:transmission-tower-import" },
-      "forecast_solar": { "default": "mdi:solar-power-variant" },
-      "forecast_gain": { "default": "mdi:cash-plus" },
-      "monthly_savings": { "default": "mdi:piggy-bank-outline" },
-      "measured_efficiency": { "default": "mdi:percent-circle-outline" },
-      "forecast_reliability": { "default": "mdi:chart-bell-curve" }
+      "energy_to_charge": {
+        "default": "mdi:battery-arrow-up"
+      },
+      "target_soc": {
+        "default": "mdi:battery-high"
+      },
+      "charge_start": {
+        "default": "mdi:clock-start"
+      },
+      "forecast_consumption": {
+        "default": "mdi:home-lightning-bolt-outline"
+      },
+      "peak_need": {
+        "default": "mdi:transmission-tower-import"
+      },
+      "forecast_solar": {
+        "default": "mdi:solar-power-variant"
+      },
+      "forecast_gain": {
+        "default": "mdi:cash-plus"
+      },
+      "monthly_savings": {
+        "default": "mdi:piggy-bank-outline"
+      },
+      "measured_efficiency": {
+        "default": "mdi:percent-circle-outline"
+      },
+      "forecast_reliability": {
+        "default": "mdi:chart-bell-curve"
+      },
+      "full_charge_days": {
+        "default": "mdi:battery-sync-outline"
+      },
+      "board_power": {
+        "default": "mdi:flash"
+      }
     },
-    "switch": { "auto_control": { "default": "mdi:robot-outline" } },
-    "select": { "profile": { "default": "mdi:shield-half-full" } },
-    "number": { "gain_threshold": { "default": "mdi:cash-check" } },
-    "binary_sensor": { "power_alert": { "default": "mdi:flash-alert-outline" } },
-    "button": { "recalculate": { "default": "mdi:refresh" } }
+    "switch": {
+      "auto_control": {
+        "default": "mdi:robot-outline"
+      },
+      "battery_control": {
+        "default": "mdi:home-battery-outline"
+      },
+      "router_control": {
+        "default": "mdi:water-boiler-auto"
+      }
+    },
+    "select": {
+      "profile": {
+        "default": "mdi:shield-half-full"
+      },
+      "full_charge": {
+        "default": "mdi:battery-charging-100"
+      }
+    },
+    "number": {
+      "gain_threshold": {
+        "default": "mdi:cash-check"
+      },
+      "reserve_soc": {
+        "default": "mdi:battery-lock"
+      }
+    },
+    "binary_sensor": {
+      "power_alert": {
+        "default": "mdi:flash-alert-outline"
+      }
+    },
+    "button": {
+      "recalculate": {
+        "default": "mdi:refresh"
+      }
+    }
   },
   "services": {
-    "recalculate": { "service": "mdi:refresh" },
-    "force_night": { "service": "mdi:weather-night" }
+    "recalculate": {
+      "service": "mdi:refresh"
+    },
+    "force_night": {
+      "service": "mdi:weather-night"
+    },
+    "full_charge": {
+      "service": "mdi:battery-charging-100"
+    }
   }
 }

@@ -266,3 +266,55 @@ def tariff_grid(hass: HomeAssistant, prix_actuel: str | None) -> Any:
         return None
     st = hass.states.get(prix_actuel)
     return st.attributes.get("grille") if st else None
+
+
+# ------------------------------------------------------------------ routeurs F1ATB (N5)
+def router_devices(hass: HomeAssistant) -> list[tuple[str, str]]:
+    """Routeurs ajoutés dans ha-routeur-f1atb : [(device_id, nom)], par leur puissance routée."""
+    from homeassistant.helpers import device_registry as dr
+
+    from .const import ROUTER_DOMAIN
+
+    reg = er.async_get(hass)
+    dreg = dr.async_get(hass)
+    out: dict[str, str] = {}
+    for e in reg.entities.values():
+        if e.platform == ROUTER_DOMAIN and e.translation_key == "routed_power" and e.device_id:
+            dev = dreg.async_get(e.device_id)
+            if dev is not None and dev.disabled_by is None:
+                out[e.device_id] = dev.name_by_user or dev.name or e.device_id
+    return sorted(out.items(), key=lambda kv: kv[1].lower())
+
+
+def device_name(hass: HomeAssistant, device_id: str) -> str:
+    from homeassistant.helpers import device_registry as dr
+
+    dev = dr.async_get(hass).async_get(device_id)
+    return (dev.name_by_user or dev.name) if dev else device_id
+
+
+async def async_last_full_charge(
+    hass: HomeAssistant, entity_id: str, start: datetime, end: datetime, full_soc: float
+) -> datetime | None:
+    """Dernière fois où le niveau de charge a atteint 100 % dans l'historique (N3)."""
+    try:
+        from homeassistant.components.recorder import get_instance, history
+    except ImportError:  # recorder absent
+        return None
+
+    def _query():
+        return history.state_changes_during_period(hass, start, end, entity_id, no_attributes=True)
+
+    try:
+        states = await get_instance(hass).async_add_executor_job(_query)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Historique de %s illisible : %s", entity_id, err)
+        return None
+    last = None
+    for st in states.get(entity_id, []):
+        try:
+            if float(st.state) >= full_soc:
+                last = st.last_changed
+        except (TypeError, ValueError):
+            continue
+    return last

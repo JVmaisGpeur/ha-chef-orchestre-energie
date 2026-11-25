@@ -107,7 +107,12 @@ async def async_setup_entry(
     hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback
 ) -> None:
     orch: Orchestrator = entry.runtime_data
-    async_add_entities(ChefSensor(orch, d) for d in SENSORS)
+    entities: list[SensorEntity] = [ChefSensor(orch, d) for d in SENSORS]
+    from . import sources as src
+
+    for dev in src.battery_units(hass, orch.cfg["battery_device_id"]):
+        entities.append(FullChargeDaysSensor(orch, dev, src.device_name(hass, dev)))
+    async_add_entities(entities)
 
 
 class ChefSensor(ChefEntity, SensorEntity):
@@ -152,6 +157,18 @@ class ChefSensor(ChefEntity, SensorEntity):
                 "capacity_short": plan.capacity_short,
                 "may_not_finish": plan.may_not_finish,
                 "import_limit": self.orch.import_limit,
+                # v1.3.0
+                "battery_control": self.orch.battery_control,
+                "ceilings_available": self.orch.ceilings_ok,
+                "excluded_power": round(self.orch.excluded_w),
+                "full_charge_planned": self.orch.fc_action,
+                "full_charge_request": self.orch.fullcharge.request,
+                "full_charge_units": self.orch.fc_units,
+                "full_charge_late": self.orch.fc_alert,
+                **self.orch.full_charge_now_estimate(),
+                "calibrating": self.orch.calibrating_units,
+                "router_priority": self.orch.cfg.get("router_priority"),
+                "routers": self.orch.router_status,
                 "hourly_plan": [
                     {
                         "start": sp.start.isoformat(),
@@ -186,3 +203,39 @@ class ChefSensor(ChefEntity, SensorEntity):
         if key == "forecast_reliability":
             return {"days_of_data": self.orch.profile.days_of_data}
         return None
+
+
+class FullChargeDaysSensor(ChefEntity, SensorEntity):
+    """Jours depuis la dernière charge complète d'une batterie (N3)."""
+
+    _attr_native_unit_of_measurement = "d"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, orch: Orchestrator, device_id: str, name: str) -> None:
+        super().__init__(orch, "full_charge_days")
+        self._device = device_id
+        self._attr_unique_id = f"{orch.entry.entry_id}_full_charge_days_{device_id}"
+        self._attr_translation_placeholders = {"battery": name}
+
+    @property
+    def native_value(self) -> float | None:
+        from homeassistant.util import dt as dt_util
+
+        days = self.orch.fullcharge.days(self._device, dt_util.now())
+        return None if days is None else round(days, 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        fc = self.orch.fullcharge
+        last = fc.last(self._device)
+        due = fc.calibration_due(self._device)
+        return {
+            "device_id": self._device,
+            "last_full_charge": last.isoformat() if last else None,
+            "estimated": self._device in fc.estimated,
+            "calibration_expected": due.isoformat() if due else None,
+            "calibrating": self._device in self.orch.calibrating_units,
+            "threshold_days": self.orch.cfg.get("full_charge_days", 20),
+        }

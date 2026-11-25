@@ -148,3 +148,9 @@ def test_interface_stable():
     assert "interface_attributes" in switch
     for attr in ("controlled_device_id", "controlled_device_ids", "controlled_entities", "interface_version"):
         assert f'"{attr}"' in manager, attr
+
+
+def test_selecteurs_nombre_sans_unite_none():
+    """Un NumberSelector ne doit jamais recevoir unit_of_measurement=None (menu Avancé en erreur, v1.2.0)."""
+    code = (BASE / "config_flow.py").read_text(encoding="utf-8")
+    assert "unit_of_measurement=unit" not in code

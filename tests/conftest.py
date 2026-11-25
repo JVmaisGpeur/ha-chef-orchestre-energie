@@ -17,3 +17,5 @@ def _load(name: str):
 
 planner = _load("planner")
 consumption = _load("consumption")
+fullcharge = _load("fullcharge")
+router_logic = _load("router_logic")

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Détection",
-        "description": "Intégrations trouvées sur votre Home Assistant :\n\n- Batterie — ha-zendure-solarflow-local (obligatoire, ≥ {battery_min}) : {battery_found}\n- Prévision solaire (obligatoire) : {solar_found}\n- Tarifs — ha-tarifs-electricite (recommandée, ≥ {tariff_min}) : {tariff_found}\n\nSans Tarifs Électricité, le Chef d'orchestre s'installe mais ne pilote pas : il lui faut les prix et les heures creuses ({tariff_url}). Tout le reste (puissance souscrite, offre, prix, heures creuses, modes et SOC de la batterie) est lu dans ces intégrations : rien à ressaisir."
+        "description": "Intégrations trouvées sur votre Home Assistant :\n\n- Batterie — ha-zendure-solarflow-local (obligatoire, ≥ {battery_min}) : {battery_found}\n- Prévision solaire (obligatoire) : {solar_found}\n- Tarifs — ha-tarifs-electricite (recommandée, ≥ {tariff_min}) : {tariff_found}\n- Routeur solaire — ha-routeur-f1atb (facultative) : {router_found}\n\nSans Tarifs Électricité, le Chef d'orchestre s'installe mais ne pilote pas : il lui faut les prix et les heures creuses ({tariff_url}). Tout le reste (puissance souscrite, offre, prix, heures creuses, modes et SOC de la batterie) est lu dans ces intégrations : rien à ressaisir."
       },
       "sources": {
         "title": "Sources",
@@ -44,11 +44,13 @@
           "power_kw": "Puissance",
           "power_sensor": "Capteur de puissance (détection de marche)",
           "state_entity": "Entité marche/arrêt (détection de marche)",
-          "add_another": "En ajouter un autre ensuite"
+          "add_another": "En ajouter un autre ensuite",
+          "battery_powered": "Alimenté par les batteries"
         },
         "data_description": {
           "power_kw": "Puissance nominale en kW, par exemple 3 pour un chauffe-eau de 3 000 W.",
-          "power_sensor": "Facultatif : sert à savoir s'il est en marche."
+          "power_sensor": "Facultatif : sert à savoir s'il est en marche.",
+          "battery_powered": "Non : les batteries ne couvrent pas sa puissance quand il est en marche (il prend le réseau ou le solaire). Nécessite ha-zendure-solarflow-local 1.6.0 ou plus récente et un capteur de mise en route."
         }
       },
       "measure": {
@@ -60,12 +62,34 @@
       },
       "recap": {
         "title": "Récapitulatif",
-        "description": "- Tarifs : {tariff}\n- Batterie : {battery}\n- Prévision solaire : {solar}\n- Seuil de rentabilité : {threshold} €/kWh, rendement {efficiency} %, réserve {reserve} %\n- Gros consommateurs : {loads}\n- Puissance au tableau : {power_sensor}\n\nTout se modifie ensuite dans Configurer.",
+        "description": "- Tarifs : {tariff}\n- Batterie : {battery}\n- Prévision solaire : {solar}\n- Seuil de rentabilité : {threshold} €/kWh, rendement {efficiency} %, réserve {reserve} %\n- Gros consommateurs : {loads}\n- Puissance au tableau : {power_sensor}\n- Routeurs solaires : {routers}\n\nTout se modifie ensuite dans Configurer.",
         "data": {
           "auto_start": "Activer le pilotage maintenant"
         },
         "data_description": {
           "auto_start": "Laissez coché pour que le Chef d'orchestre pilote la batterie dès cette nuit. Sinon il calcule le plan sans rien piloter."
+        }
+      },
+      "routers": {
+        "title": "Routeurs solaires",
+        "description": "Routeurs F1ATB trouvés dans ha-routeur-f1atb. Décochez ceux que le Chef d'orchestre ne doit pas piloter : votre validation vaut accord pour qu'il en prenne la main. Chaque routeur retenu devient un gros consommateur que les batteries n'alimentent pas.",
+        "data": {
+          "routers": "Routeurs à piloter",
+          "router_priority": "Priorité du surplus solaire"
+        },
+        "data_description": {
+          "router_priority": "Batteries d'abord : le routeur ne prend le surplus que quand les batteries sont pleines ou chargent au maximum. Routeur d'abord : le ballon chauffe en premier, les batteries prennent le reste."
+        }
+      },
+      "routers_none": {
+        "title": "Routeurs solaires",
+        "description": "ha-routeur-f1atb est installée mais aucun routeur n'y est ajouté. Ajoutez vos routeurs dans cette intégration, puis revenez dans Configurer → Routeurs solaires."
+      },
+      "router_question": {
+        "title": "Routeur solaire",
+        "description": "Avez-vous un routeur solaire pour le chauffe-eau ? Pour un routeur F1ATB, installez d'abord ha-routeur-f1atb ({router_url}) : le Chef d'orchestre pourra alors le piloter. Pour un autre routeur, déclarez simplement le chauffe-eau comme gros consommateur à l'étape suivante.",
+        "data": {
+          "router_kind": "Votre routeur"
         }
       }
     },
@@ -90,7 +114,8 @@
           "sources": "Sources",
           "loads": "Gros consommateurs",
           "notifications": "Notifications",
-          "advanced": "Avancé"
+          "advanced": "Avancé",
+          "routers": "Routeurs solaires"
         }
       },
       "economy": {
@@ -169,10 +194,13 @@
           "history_weeks": "Semaines d'historique apprises",
           "solar_correction": "Apprendre un facteur de correction solaire",
           "tempo_assumption": "Couleur Tempo supposée tant que celle de demain est inconnue",
-          "finish_advance": "Finir la charge avant la fin des heures creuses de"
+          "finish_advance": "Finir la charge avant la fin des heures creuses de",
+          "full_charge_auto": "Anticiper la calibration des batteries",
+          "full_charge_days": "Charge complète programmée après"
         },
         "data_description": {
-          "solar_correction": "Nécessite le capteur de production solaire réelle (Consommation)."
+          "solar_correction": "Nécessite le capteur de production solaire réelle (Consommation).",
+          "full_charge_days": "Jours sans charge à 100 % avant de programmer une charge complète (20 par défaut). D'après le support Zendure, une calibration automatique peut se lancer après environ 30 jours."
         }
       },
       "loads": {
@@ -203,10 +231,31 @@
           "kind": "Type",
           "power_sensor": "Capteur de puissance (détection de marche)",
           "state_entity": "Entité marche/arrêt (détection de marche)",
-          "power_kw": "Puissance"
+          "power_kw": "Puissance",
+          "battery_powered": "Alimenté par les batteries"
         },
         "data_description": {
-          "power_kw": "Puissance nominale en kW."
+          "power_kw": "Puissance nominale en kW.",
+          "battery_powered": "Non : les batteries ne couvrent pas sa puissance quand il est en marche (il prend le réseau ou le solaire). Nécessite ha-zendure-solarflow-local 1.6.0 ou plus récente et un capteur de mise en route."
+        }
+      },
+      "routers": {
+        "title": "Routeurs solaires",
+        "data": {
+          "routers": "Routeurs à piloter",
+          "router_priority": "Priorité du surplus solaire",
+          "summer_soc": "Exception été : SOC des batteries à partir duquel le routeur n'est pas délesté",
+          "router_daily_kwh": "Besoin quotidien du ballon (si l'historique manque)"
+        },
+        "data_description": {
+          "summer_soc": "Au-dessus, et si le soleil de demain suffit à recharger les batteries, la surveillance laisse le routeur chauffer (90 % par défaut)."
+        }
+      },
+      "router_usage": {
+        "title": "Usage du routeur",
+        "description": "Usage de {router}.",
+        "data": {
+          "usage": "Usage"
         }
       }
     },
@@ -215,6 +264,9 @@
       "battery_version": "ha-zendure-solarflow-local {battery_min} ou plus récente est nécessaire.",
       "no_solar_selected": "Choisissez au moins une prévision solaire.",
       "gauge_order": "Le seuil critique doit être plus haut que le seuil d'alerte."
+    },
+    "abort": {
+      "no_router": "Aucun routeur dans ha-routeur-f1atb. Ajoutez vos routeurs dans cette intégration, puis revenez ici."
     }
   },
   "selector": {
@@ -245,6 +297,36 @@
         "heat_pump": "Pompe à chaleur",
         "ev": "Véhicule électrique",
         "other": "Autre"
+      }
+    },
+    "router_priority": {
+      "options": {
+        "battery_first": "Batteries toujours d'abord",
+        "router_first": "Routeur d'abord, jusqu'au ballon chaud"
+      }
+    },
+    "router_kind": {
+      "options": {
+        "f1atb": "Routeur F1ATB",
+        "other": "Autre routeur",
+        "none": "Pas de routeur"
+      }
+    },
+    "router_usage": {
+      "options": {
+        "water_heater": "Chauffe-eau",
+        "pool": "Piscine",
+        "heating": "Chauffage",
+        "other": "Autre"
+      }
+    },
+    "full_charge_when": {
+      "options": {
+        "auto": "Automatique",
+        "next_sun": "Au prochain jour de soleil",
+        "tonight": "Cette nuit",
+        "now": "Maintenant",
+        "skip": "Ignorer pour ce cycle"
       }
     }
   },
@@ -315,11 +397,20 @@
       },
       "board_power": {
         "name": "Puissance au tableau"
+      },
+      "full_charge_days": {
+        "name": "Charge complète {battery}"
       }
     },
     "switch": {
       "auto_control": {
         "name": "Pilotage automatique"
+      },
+      "battery_control": {
+        "name": "Pilotage des batteries"
+      },
+      "router_control": {
+        "name": "Pilotage du routeur {router}"
       }
     },
     "select": {
@@ -329,6 +420,16 @@
           "cautious": "Prudent",
           "balanced": "Équilibré",
           "economical": "Économe"
+        }
+      },
+      "full_charge": {
+        "name": "Charge complète",
+        "state": {
+          "auto": "Automatique",
+          "next_sun": "Au prochain jour de soleil",
+          "tonight": "Cette nuit",
+          "now": "Maintenant",
+          "skip": "Ignorer pour ce cycle"
         }
       }
     },
@@ -379,6 +480,18 @@
     "reserve_unavailable": {
       "title": "Réserve de SOC impossible à appliquer",
       "description": "Le Chef d'orchestre ne trouve pas les réglages SOC min et SOC max des batteries. Mettez à jour ha-zendure-solarflow-local : sans eux, la réserve de 50 % et le passage à 100 % les jours de soleil sont désactivés ; le reste du pilotage fonctionne."
+    },
+    "full_charge_late": {
+      "title": "Charge complète des batteries en retard",
+      "description": "Les batteries n'ont pas été chargées à 100 % depuis {days} jours et aucun jour de soleil ni aucune nuit favorable n'est prévu. D'après le support Zendure, une calibration automatique peut se lancer vers 30 jours. Choisissez « Charge complète → Cette nuit » dans la carte Énergie, ou laissez faire."
+    },
+    "router_found": {
+      "title": "Routeur solaire disponible",
+      "description": "ha-routeur-f1atb propose des routeurs que le Chef d'orchestre ne pilote pas encore : {routers}. Pour les ajouter, ouvrez Configurer → Routeurs solaires. Le Chef d'orchestre ne prend jamais la main sans votre accord."
+    },
+    "router_threshold": {
+      "title": "Seuil du routeur à corriger",
+      "description": "Le seuil de routage (Pw) doit être au moins 20 W sous la cible des batteries (0 W), par exemple −20 W ; sinon les batteries alimentent le ballon en continu. À corriger dans l'interface du routeur : {routers}."
     }
   },
   "exceptions": {
@@ -402,6 +515,15 @@
     },
     "notify_charge_unfinished": {
       "message": "La charge de la nuit s'est arrêtée à {soc} % au lieu de {target} %."
+    },
+    "notify_full_charge_sun": {
+      "message": "Charge complète prévue avec le soleil pour {batteries} : SOC maximum à 100 % aujourd'hui, pour éviter la calibration automatique."
+    },
+    "notify_full_charge_tonight": {
+      "message": "Charge complète prévue cette nuit en heures creuses pour {batteries}, pour éviter la calibration automatique."
+    },
+    "notify_full_charge_now": {
+      "message": "Charge complète en cours pour {batteries}, comme demandé."
     }
   },
   "services": {
@@ -430,6 +552,20 @@
         "target_soc": {
           "name": "SOC cible",
           "description": "Pour une charge ; SOC maximum si vide."
+        }
+      }
+    },
+    "full_charge": {
+      "name": "Charge complète",
+      "description": "Programme une charge des batteries à 100 % (anticipation de la calibration automatique).",
+      "fields": {
+        "config_entry_id": {
+          "name": "Instance",
+          "description": "Laissez vide pour toutes."
+        },
+        "when": {
+          "name": "Quand",
+          "description": "auto, next_sun, tonight, now ou skip."
         }
       }
     }

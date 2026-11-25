@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "chef_orchestre_energie"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 PLATFORMS = ["binary_sensor", "button", "number", "select", "sensor", "switch"]
 
 # Intégrations lues et versions minimales (contrats, interface 1)
@@ -41,6 +41,33 @@ UNIT_SOC_BOUNDS = {"min_soc": (0, 50), "soc_set": (70, 100)}
 EXTERNAL_CONTROL_SERVICE = "set_external_control"
 EXTERNAL_CONTROL_RENEW_MIN = 15
 CONTROLLER_NAME = "Chef d'orchestre énergie"
+# ha-zendure-solarflow-local ≥ 1.6.0 : plafonds, puissance à ne pas couvrir, calibration
+# (détectés par leurs entités, jamais par la version)
+CEILING_KEYS = ("charge_power_limit", "discharge_power_limit", "excluded_power")
+UNIT_CAL_KEYS = ("calibrating",)
+
+# ha-routeur-f1atb (domaine f1atb_routeur) : contrat de pilotage externe
+ROUTER_DOMAIN = "f1atb_routeur"
+ROUTER_KEYS = (
+    "operating_mode",
+    "routed_power",
+    "routed_energy_total",
+    "water_temperature",
+    "target_reached",
+    "boost_active",
+    "external_control",
+    "connected",
+    "control_enabled",
+    # demandés au cahier des charges du routeur pour la v1.3.0 du Chef d'orchestre
+    "load_power",
+    "on_slot_active",
+    "routing_power_threshold",
+)
+ROUTER_REQUIRED = ("routed_power", "connected")
+ROUTER_CONTROLLED_KEYS = ["mode", "shed"]
+ROUTER_FORCE_MIN = 30  # forçages de 30 min, renouvelés
+ROUTER_RENEW_MIN = 15
+ROUTER_USAGES = ["water_heater", "pool", "heating", "other"]
 INTERFACE_VERSION = 1
 
 # ------------------------------------------------------------------ configuration
@@ -71,6 +98,13 @@ CONF_POWER_SENSOR = "power_sensor"  # puissance au tableau (E4)
 CONF_GAUGE_WARN = "gauge_warn"
 CONF_GAUGE_CRIT = "gauge_crit"
 CONF_AUTO_START = "auto_start"  # pilotage activé à la fin de l'assistant
+# v1.3.0
+CONF_ROUTERS = "routers"  # [{device_id, name, usage}]
+CONF_ROUTER_PRIORITY = "router_priority"  # battery_first / router_first
+CONF_SUMMER_SOC = "summer_soc"  # % : exception été de la surveillance
+CONF_FULL_CHARGE_DAYS = "full_charge_days"  # seuil d'anticipation (N3)
+CONF_FULL_CHARGE_AUTO = "full_charge_auto"
+CONF_ROUTER_DAILY_KWH = "router_daily_kwh"  # besoin du ballon, si l'historique manque
 
 # Gros consommateurs
 LOAD_NAME = "name"
@@ -81,6 +115,8 @@ LOAD_THRESHOLD = "threshold_w"
 LOAD_STATE_ENTITY = "state_entity"
 LOAD_ENERGY_SENSOR = "energy_sensor"
 LOAD_WINDOW = "usual_window"
+LOAD_BATTERY = "battery_powered"  # N1 : les batteries peuvent-elles l'alimenter ?
+LOAD_ROUTER = "router_device_id"  # ligne venant d'un routeur F1ATB
 LOAD_KINDS = ["water_heater", "heat_pump", "ev", "other"]
 
 DEFAULTS = {
@@ -101,7 +137,15 @@ DEFAULTS = {
     CONF_GAUGE_WARN: 80,
     CONF_GAUGE_CRIT: 95,
     CONF_AUTO_START: True,
+    CONF_ROUTER_PRIORITY: "battery_first",
+    CONF_SUMMER_SOC: 90,
+    CONF_FULL_CHARGE_DAYS: 20,
+    CONF_FULL_CHARGE_AUTO: True,
+    CONF_ROUTER_DAILY_KWH: 3.0,
 }
+ROUTER_PRIORITIES = ["battery_first", "router_first"]
+FULL_CHARGE_OPTIONS = ["auto", "next_sun", "tonight", "now", "skip"]
+CALIBRATION_DAYS = 30
 MIN_MARGIN = 10  # % : la régulation peut dépasser la limite 2 à 5 s
 
 PROFILES = {"cautious": 0.20, "balanced": 0.10, "economical": 0.0}
@@ -119,5 +163,6 @@ STORE_VERSION = 1
 
 SERVICE_RECALCULATE = "recalculate"
 SERVICE_FORCE_NIGHT = "force_night"
+SERVICE_FULL_CHARGE = "full_charge"
 
 SIGNAL_UPDATE = f"{DOMAIN}_update_{{}}"

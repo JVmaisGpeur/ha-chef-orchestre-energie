@@ -42,6 +42,22 @@ from .const import (
     CONF_NOTIFY_SERVICE,
     CONF_PROFILE,
     CONF_AUTO_START,
+    CONF_FULL_CHARGE_AUTO,
+    CONF_FULL_CHARGE_DAYS,
+    CONF_ROUTER_DAILY_KWH,
+    CONF_ROUTER_PRIORITY,
+    CONF_ROUTERS,
+    CONF_SUMMER_SOC,
+    CEILING_KEYS,
+    LOAD_BATTERY,
+    LOAD_ROUTER,
+    ROUTER_CONTROLLED_KEYS,
+    ROUTER_DOMAIN,
+    ROUTER_FORCE_MIN,
+    ROUTER_KEYS,
+    ROUTER_RENEW_MIN,
+    ROUTER_REQUIRED,
+    UNIT_CAL_KEYS,
     CONF_GAUGE_CRIT,
     CONF_GAUGE_WARN,
     CONF_POWER_SENSOR,
@@ -89,8 +105,19 @@ from .consumption import (
     hourly_changes,
     measured_efficiency,
 )
+from .fullcharge import (
+    ACTION_NOW,
+    ACTION_SUN,
+    ACTION_TONIGHT,
+    CALIBRATION_DAYS,
+    FULL_SOC,
+    FullChargeTracker,
+)
+from .router_logic import RouterDecision, RouterInputs, RouterLogic, combine
 from .planner import (
     MODE_GRID_CHARGE,
+    MODE_OFF,
+    MODE_SMART,
     PLAN_CHARGE,
     PLAN_IDLE,
     PLAN_MISSING_DATA,
@@ -103,6 +130,7 @@ from .planner import (
     Settings,
     Step,
     compute_plan_with_reserve,
+    daylight_overflow,
     import_limit_w,
     wants_full_charge,
 )
@@ -173,6 +201,36 @@ class Orchestrator:
         self._unsubs: list[Callable[[], None]] = []
         self._pending: Callable[[], None] | None = None
         self._lock_busy = False
+        # v1.3.0 : choix de ce qui est piloté (N6)
+        self.battery_control = True
+        self.router_control: dict[str, bool] = {}
+        # Charge complète et calibration (N3)
+        self.fullcharge = FullChargeTracker()
+        self.fc_action: str | None = None
+        self.fc_units: list[str] = []
+        self.fc_alert = False
+        self._fc_notified: str | None = None
+        self.unit_level: dict[str, str] = {}  # appareil → electric_level
+        self.unit_cal: dict[str, str] = {}  # appareil → calibrating
+        self._history_checked: set[str] = set()
+        # Plafonds et puissance à ne pas couvrir (Zendure ≥ 1.6.0, N1/N5)
+        self.ceiling_entities: dict[str, str] = {}
+        self.ceilings_ok = False
+        self._written: dict[str, tuple[float, datetime]] = {}
+        self.excluded_w = 0.0
+        self._max_cache: dict[str, float] = {}
+        self._excluded_pending: Callable[[], None] | None = None
+        # Routeurs F1ATB (N5)
+        self.routers: list[dict[str, Any]] = list(self.cfg.get(CONF_ROUTERS) or [])
+        self.router_entities: dict[str, dict[str, str]] = {}
+        self.router_logic: dict[str, RouterLogic] = {}
+        self.router_decisions: dict[str, RouterDecision] = {}
+        self.router_status: list[dict[str, Any]] = []
+        self.router_daily_kwh: dict[str, float] = {}
+        self._router_sent: dict[str, dict[str, Any]] = {}
+        self._router_threshold_check: datetime | None = None
+        self.tomorrow_surplus_kwh: float | None = None
+        self._battery_range_kwh: float | None = None
 
     # ------------------------------------------------------------ cycle de vie
     async def async_start(self) -> None:
@@ -195,6 +253,10 @@ class Orchestrator:
         watched = [w for w in watched if w]
         if watched:
             self._unsubs.append(async_track_state_change_event(hass, watched, self._on_change))
+        # Puissance à ne pas couvrir : suit les consommateurs exclus en direct (N1)
+        excl = self._excluded_sources()
+        if excl:
+            self._unsubs.append(async_track_state_change_event(hass, excl, self._on_excluded_change))
         # Puissance au tableau : affichage en direct, sans recalcul du plan
         if self.cfg.get(CONF_POWER_SENSOR):
             self._unsubs.append(
@@ -209,7 +271,10 @@ class Orchestrator:
         self._unsubs.clear()
         if self._pending:
             self._pending()
+        if self._excluded_pending:
+            self._excluded_pending()
         await self._async_release()
+        await self._async_release_routers()
         await self._store.async_save(self._dump())
 
     def add_listener(self, cb: Callable[[], None]) -> Callable[[], None]:
@@ -241,6 +306,11 @@ class Orchestrator:
         self._notified = dict(data.get("notified", {}))
         self._watch = data.get("watch")
         self._charging_night = data.get("charging_night")
+        self.battery_control = bool(data.get("battery_control", True))
+        saved = data.get("router_control", {})
+        self.router_control = {r["device_id"]: bool(saved.get(r["device_id"], True)) for r in self.routers}
+        self.fullcharge = FullChargeTracker(data.get("fullcharge"))
+        self._fc_notified = data.get("fc_notified")
         ov = data.get("override")
         if ov and dt_util.parse_datetime(ov.get("until", "")) and dt_util.parse_datetime(
             ov["until"]
@@ -268,6 +338,10 @@ class Orchestrator:
             "watch": self._watch,
             "charging_night": self._charging_night,
             "override": self.override,
+            "battery_control": self.battery_control,
+            "router_control": self.router_control,
+            "fullcharge": self.fullcharge.dump(),
+            "fc_notified": self._fc_notified,
         }
 
     def _save(self) -> None:
@@ -275,13 +349,48 @@ class Orchestrator:
 
     # ------------------------------------------------------------ réglages à chaud
     async def async_set_auto_control(self, on: bool) -> None:
+        """Interrupteur général : coupé, tout s'arrête ; rallumé, les choix de N6 reviennent."""
         self.auto_control = on
+        self._save()
+        if not on:
+            await self._async_release()
+            await self._async_release_routers()
+        else:
+            self._last_declare = None
+            self._router_sent.clear()
+        await self.async_update_plan()
+
+    async def async_set_battery_control(self, on: bool) -> None:
+        """Pilotage des batteries (N6) : coupé, Zendure reprend la main."""
+        self.battery_control = on
         self._save()
         if not on:
             await self._async_release()
         else:
             self._last_declare = None
         await self.async_update_plan()
+
+    async def async_set_router_control(self, device_id: str, on: bool) -> None:
+        """Pilotage d'un routeur (N6) : coupé, le routeur revient en autonome."""
+        if device_id not in self.router_control:
+            return
+        self.router_control[device_id] = on
+        self._save()
+        if not on:
+            await self._async_release_routers([device_id])
+        await self._async_control_routers(dt_util.now())
+        self._notify_listeners()
+
+    async def async_set_full_charge(self, request: str) -> None:
+        """Demande de charge complète (N3) : auto, next_sun, tonight, now, skip."""
+        socs = {u: src.state_float(self.hass, self.unit_level.get(u)) for u in self.units}
+        self.fullcharge.set_request(request, self.units, dt_util.now(), socs)
+        self._save()
+        await self.async_update_plan()
+
+    @property
+    def battery_piloted(self) -> bool:
+        return self.auto_control and self.battery_control
 
     async def async_set_reserve_soc(self, value: float) -> None:
         self.reserve_soc = max(0.0, min(50.0, float(value)))
@@ -364,6 +473,48 @@ class Orchestrator:
             len(v) == len(UNIT_SOC_KEYS) for v in self.unit_soc.values()
         )
         self._issue("reserve_unavailable", ok and not self.e2_ok, "reserve_unavailable")
+        # N3 : niveau de charge et calibration de chaque batterie
+        self.unit_level, self.unit_cal = {}, {}
+        for dev in self.units:
+            found = src.find_entities(self.hass, BATTERY_DOMAIN, ("electric_level",) + UNIT_CAL_KEYS, device_id=dev)
+            if "electric_level" in found:
+                self.unit_level[dev] = found["electric_level"]
+            if "calibrating" in found:
+                self.unit_cal[dev] = found["calibrating"]
+        await self._async_init_full_charge()
+        # N1/N5 : plafonds et puissance à ne pas couvrir (Zendure ≥ 1.6.0)
+        self.ceiling_entities = src.find_entities(
+            self.hass, BATTERY_DOMAIN, CEILING_KEYS, device_id=self.cfg[CONF_BATTERY_DEVICE]
+        )
+        self.ceilings_ok = all(k in self.ceiling_entities for k in CEILING_KEYS)
+        # N5 : routeurs déclarés
+        self.router_entities = {
+            r["device_id"]: src.find_entities(self.hass, ROUTER_DOMAIN, ROUTER_KEYS, device_id=r["device_id"])
+            for r in self.routers
+        }
+        for r in self.routers:
+            self.router_logic.setdefault(r["device_id"], RouterLogic())
+            self.router_control.setdefault(r["device_id"], True)
+        configured = {r["device_id"] for r in self.routers}
+        seen = set(self.cfg.get("routers_seen") or [])
+        new = [name for dev, name in src.router_devices(self.hass) if dev not in configured and dev not in seen]
+        self._issue("router_found", bool(new), "router_found", {"routers": ", ".join(new)})
+
+    async def _async_init_full_charge(self) -> None:
+        """Point de départ du compteur : dernière charge à 100 % de l'historique, sinon aujourd'hui."""
+        now = dt_util.now()
+        for dev, eid in self.unit_level.items():
+            if dev in self.fullcharge.last_full or dev in self._history_checked:
+                continue
+            self._history_checked.add(dev)
+            last = await src.async_last_full_charge(
+                self.hass, eid, now - timedelta(days=CALIBRATION_DAYS + 5), now, FULL_SOC
+            )
+            if last is not None:
+                self.fullcharge.start(dev, last, estimated=False)
+            else:
+                self.fullcharge.start(dev, now, estimated=True)
+        self._save()
 
     def _issue(self, issue_id: str, active: bool, key: str, placeholders: dict | None = None) -> None:
         full_id = f"{self.entry.entry_id}_{issue_id}"
@@ -534,6 +685,12 @@ class Orchestrator:
                     loads_w=self._loads_w(t, now),
                 )
             )
+        tomorrow = (now + timedelta(days=1)).date()
+        self.tomorrow_surplus_kwh = round(
+            sum(max(0.0, st.solar_kwh - st.consumption_kwh) for st in steps if dt_util.as_local(st.start).date() == tomorrow),
+            2,
+        )
+        self._battery_range_kwh = battery.range_kwh
         settings = Settings(
             efficiency=self.efficiency_used,
             wear_eur_kwh=float(self.cfg[CONF_WEAR]),
@@ -576,9 +733,15 @@ class Orchestrator:
         non des valeurs que le Chef d'orchestre a lui-même écrites.
         """
         self.keeper.new_plan()
+        now = dt_util.now()
+        calibrating = bool(self.calibrating_units)
         if not self.e2_ok:
             self.full_charge = False
-            return compute_plan_with_reserve(steps, battery, settings, override, None)
+            plan = compute_plan_with_reserve(steps, battery, settings, override, None)
+            action = self._decide_full_charge(now, daylight_overflow(plan) >= battery.capacity_kwh * 0.05)
+            if action == ACTION_TONIGHT and override is None:
+                plan = compute_plan_with_reserve(steps, battery, settings, Override("charge", 100.0), None)
+            return plan
         mins, maxs = [], []
         for t in self._soc_targets():
             v = self.keeper.user_value(t)
@@ -588,13 +751,45 @@ class Orchestrator:
         user_max = sum(maxs) / len(maxs) if maxs else battery.soc_max
         self.user_soc = {"min": user_min, "max": user_max}
         base = replace(battery, soc_min=user_min, soc_max=user_max, grid_soc_max=user_max)
-        plan = compute_plan_with_reserve(steps, base, settings, override, self.reserve_soc)
+        # Pendant une calibration : pas de réserve, SOC max à 100 % (N3, d'après le support Zendure)
+        reserve = None if calibrating else self.reserve_soc
+        plan = compute_plan_with_reserve(steps, base, settings, override, reserve)
         self.full_charge = wants_full_charge(plan)
-        if self.full_charge and user_max < 100:
+        # N3 : le soleil suffit-il à monter à 100 % sans réseau ?
+        need = battery.capacity_kwh * max(0.0, 100.0 - user_max) / 100
+        sunny = daylight_overflow(plan) >= max(need, 0.2)
+        action = self._decide_full_charge(now, sunny)
+        if action == ACTION_TONIGHT and override is None:
+            full = replace(base, soc_max=100.0, grid_soc_max=100.0)
+            plan = compute_plan_with_reserve(steps, full, settings, Override("charge", 100.0), reserve)
+            self.full_charge = True
+        elif action in (ACTION_SUN, ACTION_NOW) or calibrating or (self.full_charge and user_max < 100):
+            self.full_charge = True
             full = replace(base, soc_max=100.0)
-            plan = compute_plan_with_reserve(steps, full, settings, override, self.reserve_soc)
+            plan = compute_plan_with_reserve(steps, full, settings, override, reserve)
         self._save()
         return plan
+
+    @property
+    def calibrating_units(self) -> list[str]:
+        return [u for u, eid in self.unit_cal.items() if src.state_str(self.hass, eid) == "on"]
+
+    def _decide_full_charge(self, now: datetime, sunny: bool) -> str | None:
+        """Charge complète à programmer (N3) : soleil, cette nuit, maintenant ou rien."""
+        tempo = (src.state_str(self.hass, self.tariff_entities.get("tempo_demain")) or "").lower()
+        tonight_ok = tempo not in ("blanc", "rouge", "white", "red")
+        action, units, alert = self.fullcharge.decide(
+            self.units,
+            now,
+            threshold=float(self.cfg[CONF_FULL_CHARGE_DAYS]),
+            auto_enabled=bool(self.cfg[CONF_FULL_CHARGE_AUTO]),
+            sunny=sunny,
+            tonight_ok=tonight_ok,
+        )
+        self.fc_action, self.fc_units, self.fc_alert = action, units, alert
+        days = self.fullcharge.max_days(self.units, now)
+        self._issue("full_charge_late", alert, "full_charge_late", {"days": str(round(days or 0))})
+        return action
 
     def _remember_solar(self, periods) -> None:
         """Garde la prévision de demain faite le soir, pour le facteur de correction."""
@@ -623,8 +818,10 @@ class Orchestrator:
         start = end - timedelta(weeks=weeks, days=1)
         counters = src.counters_for_device(hass, self.cfg[CONF_BATTERY_DEVICE])
         house = self.cfg.get(CONF_HOUSE_SENSOR)
-        load_energy = [l.get(LOAD_ENERGY_SENSOR) for l in self.cfg.get(CONF_LOADS) or []]
-        load_energy = [x for x in load_energy if x]
+        # N1 : seule l'énergie des consommateurs que les batteries n'alimentent pas
+        # sort du besoin à couvrir
+        excluded_loads = [l for l in self.cfg.get(CONF_LOADS) or [] if not l.get(LOAD_BATTERY, True)]
+        load_energy = [l.get(LOAD_ENERGY_SENSOR) for l in excluded_loads if l.get(LOAD_ENERGY_SENSOR)]
         # Sources de la consommation : capteur maison, sinon compteurs saisis à la main,
         # sinon ceux du tableau Énergie de Home Assistant (D10)
         flows: dict[str, list[str]] = {k: [] for k in ("import", "export", "solar", "charge", "discharge")}
@@ -671,6 +868,16 @@ class Orchestrator:
             for ts, v in series(sid).items():
                 if ts in hourly:
                     hourly[ts] -= v
+        # Besoin quotidien des ballons (N5), d'après leur énergie routée
+        for load in excluded_loads:
+            dev, sid = load.get(LOAD_ROUTER), load.get(LOAD_ENERGY_SENSOR)
+            if dev and sid:
+                days: dict = defaultdict(float)
+                for ts, v in series(sid).items():
+                    days[ts.date()] += v
+                recent = sorted(days)[-7:]
+                if recent:
+                    self.router_daily_kwh[dev] = round(sum(days[d] for d in recent) / len(recent), 2)
         self._solar_actual_ids = [self.cfg[CONF_SOLAR_ACTUAL]] if self.cfg.get(CONF_SOLAR_ACTUAL) else flows["solar"]
         self.profile.daily_kwh_fallback = float(self.cfg[CONF_DAILY_KWH])
         self.profile.learn(
@@ -712,18 +919,44 @@ class Orchestrator:
     async def _control_tick(self, _now=None) -> None:
         self._accumulate_savings()
         await self._async_check_end_of_window()
+        if self._observe_full_charge(dt_util.now()):
+            await self.async_update_plan()
+            return
         await self._async_control()
 
+    def _observe_full_charge(self, now: datetime) -> bool:
+        """Note les charges à 100 % (N3). True quand une demande vient de se terminer."""
+        done = False
+        before = {u: self.fullcharge.last_full.get(u) for u in self.fc_units}
+        for dev, eid in self.unit_level.items():
+            done |= self.fullcharge.observe(dev, src.state_float(self.hass, eid), now)
+        if self.fc_action and any(
+            self.fullcharge.last_full.get(u) != before[u] for u in before
+        ) and all((self.fullcharge.days(u, now) or 0) < 1 for u in self.fc_units):
+            done = True
+        self._save()
+        return done
+
     async def _async_control(self) -> None:
+        now = dt_util.now()
+        if self.auto_control:
+            await self._async_control_routers(now)
+        await self._async_control_battery(now)
+        await self._async_notify_full_charge()
+
+    async def _async_control_battery(self, now: datetime) -> None:
         plan = self.plan
-        if not self.auto_control or plan is None or not self.sources_ok:
+        if not self.battery_piloted or plan is None or not self.sources_ok:
             return
         if plan.state in (PLAN_MISSING_DATA, PLAN_SUSPENDED):
             return  # aucune commande : la batterie garde son dernier mode
-        now = dt_util.now()
         mode = plan.mode_at(now)
+        if self.fc_action == ACTION_NOW:
+            mode = MODE_GRID_CHARGE  # charge complète demandée tout de suite (N3)
         if mode is None:
             return
+        if mode == MODE_OFF and self.calibrating_units:
+            mode = MODE_SMART  # pas de batterie à l'arrêt pendant une calibration
         night = plan.window_end.isoformat() if plan.window_end else None
         if mode == MODE_GRID_CHARGE:
             self._charging_night = night
@@ -748,7 +981,8 @@ class Orchestrator:
         self._issue("battery_degraded", regulation == "degraded", "battery_degraded")
         if mode == MODE_GRID_CHARGE:
             await self._set_number("import_limit", self.import_limit)
-            await self._set_number("charge_target_soc", plan.target_soc)
+            target = 100.0 if self.fc_action in (ACTION_NOW, ACTION_TONIGHT) else plan.target_soc
+            await self._set_number("charge_target_soc", target)
         if current != mode:
             st = self.hass.states.get(select_id) if select_id else None
             if st is not None and mode in (st.attributes.get("options") or []):
@@ -756,6 +990,7 @@ class Orchestrator:
                     "select", "select_option", {"entity_id": select_id, "option": mode}, blocking=True
                 )
         await self._async_apply_soc(plan, now)
+        await self._async_write_ceilings(now)
         await self._async_declare(True, now)
 
     async def _async_apply_soc(self, plan: Plan, now: datetime) -> None:
@@ -780,6 +1015,18 @@ class Orchestrator:
                 )
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("SOC de %s non restitué : %s", entity_id, err)
+        if self.ceilings_ok:
+            for key in CEILING_KEYS:
+                eid = self.ceiling_entities.get(key)
+                value = 0.0 if key == "excluded_power" else self._entity_max(eid)
+                if eid and value is not None:
+                    try:
+                        await self.hass.services.async_call(
+                            "number", "set_value", {"entity_id": eid, "value": value}, blocking=True
+                        )
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.debug("%s non rendu : %s", eid, err)
+        self._written.clear()
         self._save()
         await self._async_declare(False, dt_util.now())
 
@@ -795,7 +1042,7 @@ class Orchestrator:
             minutes=EXTERNAL_CONTROL_RENEW_MIN
         ):
             return
-        for dev in self.controlled_device_ids:
+        for dev in self.battery_device_ids:
             try:
                 await self.hass.services.async_call(
                     BATTERY_DOMAIN,
@@ -814,21 +1061,32 @@ class Orchestrator:
 
     # ------------------------------------------------------------ interface (E1)
     @property
-    def controlled_device_ids(self) -> list[str]:
+    def battery_device_ids(self) -> list[str]:
         target = self.cfg[CONF_BATTERY_DEVICE]
         return [target] + [d for d in self.units if d != target]
+
+    @property
+    def controlled_device_ids(self) -> list[str]:
+        out = self.battery_device_ids if self.battery_control else []
+        return out + [d for d in self._router_sent]
 
     def controlled_keys(self, device_id: str) -> list[str]:
         keys: list[str] = []
         if device_id == self.cfg[CONF_BATTERY_DEVICE]:
             keys += ["operating_mode", "import_limit", "charge_target_soc"]
+            if self.ceilings_ok:
+                keys += list(CEILING_KEYS)
         if self.e2_ok and device_id in self.unit_soc:
             keys += list(UNIT_SOC_KEYS)
         return keys
 
     @property
     def controlled_entities(self) -> list[str]:
+        if not self.battery_control:
+            return []
         out = [self.battery_entities.get(k) for k in ("operating_mode", "import_limit", "charge_target_soc")]
+        if self.ceilings_ok:
+            out += [self.ceiling_entities.get(k) for k in CEILING_KEYS]
         if self.e2_ok:
             for dev in self.units:
                 out += [self.unit_soc.get(dev, {}).get(k) for k in UNIT_SOC_KEYS]
@@ -842,6 +1100,249 @@ class Orchestrator:
             "controlled_entities": self.controlled_entities,
             "interface_version": INTERFACE_VERSION,
         }
+
+    # ------------------------------------------------------------ puissance à ne pas couvrir (N1)
+    def _excluded_loads(self) -> list[dict[str, Any]]:
+        return [l for l in self.cfg.get(CONF_LOADS) or [] if not l.get(LOAD_BATTERY, True)]
+
+    def _excluded_sources(self) -> list[str]:
+        out = []
+        for load in self._excluded_loads():
+            out += [load.get(LOAD_POWER_SENSOR), load.get(LOAD_STATE_ENTITY)]
+        return [x for x in out if x]
+
+    def _excluded_power_w(self) -> float:
+        """Puissance des consommateurs en marche que les batteries ne doivent pas alimenter."""
+        total = 0.0
+        for load in self._excluded_loads():
+            p = src.power_w(self.hass, load.get(LOAD_POWER_SENSOR))
+            if p is not None:
+                if p > float(load.get(LOAD_THRESHOLD) or (50 if load.get(LOAD_ROUTER) else 100)):
+                    total += p
+                continue
+            if src.state_str(self.hass, load.get(LOAD_STATE_ENTITY)) == "on":
+                total += float(load.get(LOAD_POWER) or 0)
+        return total
+
+    @callback
+    def _on_excluded_change(self, _event: Event) -> None:
+        if self._excluded_pending is None:
+            self._excluded_pending = async_call_later(self.hass, 10, self._excluded_update)
+
+    async def _excluded_update(self, _now=None) -> None:
+        self._excluded_pending = None
+        if self.battery_piloted and self.ceilings_ok:
+            await self._async_write_ceilings(dt_util.now())
+
+    def _entity_max(self, entity_id: str | None) -> float | None:
+        st = self.hass.states.get(entity_id) if entity_id else None
+        try:
+            value = float(st.attributes.get("max")) if st else None
+        except (TypeError, ValueError):
+            value = None
+        if value is not None:
+            self._max_cache[entity_id] = value
+        return value if value is not None else self._max_cache.get(entity_id)
+
+    async def _write_key(self, key: str, value: float, now: datetime, *, delta: float) -> None:
+        """Écrit un plafond Zendure s'il a assez changé (jamais en flash côté Zendure)."""
+        eid = self.ceiling_entities.get(key)
+        if eid is None:
+            return
+        last = self._written.get(key)
+        current = src.state_float(self.hass, eid)
+        if current is not None and abs(current - value) < 1:
+            self._written[key] = (value, now)
+            return
+        if last and abs(last[0] - value) < delta and now - last[1] < timedelta(minutes=5):
+            return
+        await self.hass.services.async_call(
+            "number", "set_value", {"entity_id": eid, "value": value}, blocking=True
+        )
+        self._written[key] = (value, now)
+
+    async def _async_write_ceilings(self, now: datetime) -> None:
+        """Plafonds de charge / décharge (routeur) et puissance à ne pas couvrir (N1, N5)."""
+        if not (self.ceilings_ok and self.battery_piloted):
+            return
+        ceiling, no_discharge = combine(list(self.router_decisions.values()))
+        if self.calibrating_units:
+            no_discharge = False  # jamais de puissance bloquée à 0 W pendant une calibration
+        maxc = self._entity_max(self.ceiling_entities.get("charge_power_limit"))
+        maxd = self._entity_max(self.ceiling_entities.get("discharge_power_limit"))
+        self.excluded_w = self._excluded_power_w()
+        try:
+            if maxc is not None:
+                value = maxc if ceiling is None else min(maxc, ceiling)
+                await self._write_key("charge_power_limit", round(value / 10) * 10, now, delta=100)
+            if maxd is not None:
+                await self._write_key("discharge_power_limit", 0.0 if no_discharge else maxd, now, delta=1)
+            await self._write_key("excluded_power", round(self.excluded_w / 10) * 10, now, delta=50)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Plafonds Zendure non écrits : %s", err)
+
+    # ------------------------------------------------------------ routeurs F1ATB (N5)
+    async def _async_control_routers(self, now: datetime) -> None:
+        if not self.routers:
+            self.router_status = []
+            return
+        hass = self.hass
+        has_service = hass.services.has_service(ROUTER_DOMAIN, EXTERNAL_CONTROL_SERVICE)
+        b = self.battery_entities
+        bat_w = src.state_float(hass, b.get("battery_power"))
+        maxc = src.state_float(hass, b.get("max_charge_power")) or self._last_max_charge or 2400.0
+        missing = src.state_float(hass, b.get("missing_energy"))
+        soc = src.state_float(hass, b.get("electric_level"))
+        grid = src.power_w(hass, self.cfg.get(CONF_POWER_SENSOR))
+        priority = self.cfg[CONF_ROUTER_PRIORITY]
+        surplus = self.tomorrow_surplus_kwh
+        range_kwh = self._battery_range_kwh or 0.0
+        status = []
+        for r in self.routers:
+            dev = r["device_id"]
+            ents = self.router_entities.get(dev, {})
+            connected = src.state_str(hass, ents.get("connected"))
+            online = connected == "on" if ents.get("connected") else bool(ents)
+            enabled = src.state_str(hass, ents.get("control_enabled")) != "off"
+            routed = src.power_w(hass, ents.get("routed_power"))
+            load_w = src.state_float(hass, ents.get("load_power")) or self._router_load_w(dev)
+            reached = src.state_str(hass, ents.get("target_reached")) == "on"
+            on_slot = src.state_str(hass, ents.get("on_slot_active")) == "on"
+            need = self.router_daily_kwh.get(dev) or float(self.cfg[CONF_ROUTER_DAILY_KWH])
+            spare = (surplus or 0.0) - (range_kwh if priority == "battery_first" else 0.0)
+            piloted = (
+                self.auto_control and self.router_control.get(dev, True) and online and enabled and has_service
+            )
+            reason = "offline" if not online else ("display_only" if not enabled else "autonomous")
+            if piloted:
+                dec = self.router_logic.setdefault(dev, RouterLogic()).step(
+                    RouterInputs(
+                        now=now,
+                        priority=priority,
+                        routed_w=routed,
+                        load_w=load_w,
+                        target_reached=reached,
+                        on_slot=on_slot,
+                        battery_w=bat_w,
+                        max_charge_w=maxc,
+                        all_full=missing is not None and missing <= 0.05,
+                        grid_export=grid is not None and grid < -30,
+                        soc=soc,
+                        summer_soc=float(self.cfg[CONF_SUMMER_SOC]),
+                        batteries_sun_ok=surplus is not None and surplus >= range_kwh,
+                        ballon_sun_ok=surplus is not None and spare >= need,
+                    )
+                )
+                self.router_decisions[dev] = dec
+                reason = dec.reason
+                await self._async_router_apply(dev, dec, now)
+            else:
+                self.router_decisions.pop(dev, None)
+                if dev in self._router_sent:
+                    await self._async_release_routers([dev])
+            status.append(
+                {
+                    "device_id": dev,
+                    "name": r.get("name") or src.device_name(hass, dev),
+                    "usage": r.get("usage", "water_heater"),
+                    "online": online,
+                    "control_enabled": enabled,
+                    "piloted": piloted,
+                    "switch_on": self.router_control.get(dev, True),
+                    "temperature": src.state_float(hass, ents.get("water_temperature")),
+                    "routed_power": routed,
+                    "target_reached": reached,
+                    "on_slot": on_slot,
+                    "state": reason,
+                }
+            )
+        self.router_status = status
+        await self._async_check_router_threshold(now)
+
+    def _router_load_w(self, device_id: str) -> float | None:
+        for load in self.cfg.get(CONF_LOADS) or []:
+            if load.get(LOAD_ROUTER) == device_id:
+                return float(load.get(LOAD_POWER) or 0) or None
+        return None
+
+    async def _router_call(self, service: str, data: dict[str, Any]) -> bool:
+        try:
+            await self.hass.services.async_call(ROUTER_DOMAIN, service, data, blocking=True)
+            return True
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Routeur %s : %s refusé (%s)", data.get("device_id"), service, err)
+            return False
+
+    async def _async_router_apply(self, dev: str, dec: RouterDecision, now: datetime) -> None:
+        """Prise de main renouvelée ; arrêt forcé de 30 min seulement quand il faut verrouiller."""
+        sent = self._router_sent.get(dev, {})
+        keys = list(ROUTER_CONTROLLED_KEYS) if dec.lock else []
+        renew = not sent or now - sent["at"] >= timedelta(minutes=ROUTER_RENEW_MIN)
+        changed = sent.get("keys") != keys or sent.get("lock") != dec.lock
+        if not (renew or changed):
+            return
+        ok = await self._router_call(
+            EXTERNAL_CONTROL_SERVICE,
+            {"device_id": dev, "active": True, "controller": CONTROLLER_NAME, "controlled_keys": keys},
+        )
+        if ok and dec.lock:
+            ok = await self._router_call(
+                "set_mode", {"device_id": dev, "mode": "off", "duration": ROUTER_FORCE_MIN}
+            )
+        if ok:
+            self._router_sent[dev] = {"keys": keys, "lock": dec.lock, "at": now}
+
+    async def _async_release_routers(self, devices: list[str] | None = None) -> None:
+        for dev in list(devices if devices is not None else self._router_sent):
+            if dev in self._router_sent:
+                await self._router_call(
+                    EXTERNAL_CONTROL_SERVICE,
+                    {"device_id": dev, "active": False, "controller": CONTROLLER_NAME, "controlled_keys": []},
+                )
+                self._router_sent.pop(dev, None)
+            self.router_decisions.pop(dev, None)
+            logic = self.router_logic.get(dev)
+            if logic:
+                self.router_logic[dev] = RouterLogic()
+
+    async def _async_check_router_threshold(self, now: datetime) -> None:
+        """Seuil Pw du routeur au moins 20 W sous la cible des batteries (0 W), chaque heure."""
+        if self._router_threshold_check and now - self._router_threshold_check < timedelta(hours=1):
+            return
+        self._router_threshold_check = now
+        bad = []
+        for r in self.routers:
+            value = src.state_float(self.hass, self.router_entities.get(r["device_id"], {}).get("routing_power_threshold"))
+            if value is not None and value > -20:
+                bad.append(f"{r.get('name') or r['device_id']} ({value:g} W)")
+        self._issue("router_threshold", bool(bad), "router_threshold", {"routers": ", ".join(bad)})
+
+    # ------------------------------------------------------------ charge complète (N3)
+    def full_charge_now_estimate(self) -> dict[str, float | None]:
+        """Énergie à acheter et coût estimé d'une charge complète immédiate (confirmation de la carte)."""
+        e = self.battery_entities
+        cap = src.state_float(self.hass, e.get("usable_capacity"))
+        soc = src.state_float(self.hass, e.get("electric_level"))
+        price = src.state_float(self.hass, self.tariff_entities.get("prix_actuel"))
+        if not cap or soc is None:
+            return {"full_charge_now_kwh": None, "full_charge_now_cost": None}
+        kwh = max(0.0, cap * (100 - soc) / 100) / max(0.5, self.efficiency_used ** 0.5)
+        return {
+            "full_charge_now_kwh": round(kwh, 2),
+            "full_charge_now_cost": round(kwh * price, 2) if price is not None else None,
+        }
+
+    async def _async_notify_full_charge(self) -> None:
+        action = self.fc_action
+        if action not in (ACTION_SUN, ACTION_TONIGHT, ACTION_NOW):
+            return
+        key = action + "|" + ",".join(sorted(self.fullcharge.last_full.get(u, "") for u in self.fc_units))
+        if self._fc_notified == key or self.cfg[CONF_NOTIFY_LEVEL] == "none":
+            return
+        self._fc_notified = key
+        self._save()
+        names = ", ".join(src.device_name(self.hass, u) for u in self.fc_units) or "-"
+        await self._async_send(f"notify_full_charge_{action}", {"batteries": names})
 
     # ------------------------------------------------------------ puissance au tableau
     @property
@@ -866,6 +1367,8 @@ class Orchestrator:
                     "current_w": p,
                     "running": running,
                     "usual_now": in_window(now, parse_window(load.get(LOAD_WINDOW))),
+                    "battery": bool(load.get(LOAD_BATTERY, True)),
+                    "router": load.get(LOAD_ROUTER),
                 }
             )
         return out

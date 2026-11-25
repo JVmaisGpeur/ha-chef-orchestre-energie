@@ -6,14 +6,15 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import PROFILES
+from .const import FULL_CHARGE_OPTIONS, PROFILES
 from .entity import ChefEntity
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    async_add_entities([ProfileSelect(entry.runtime_data, "profile")])
+    orch = entry.runtime_data
+    async_add_entities([ProfileSelect(orch, "profile"), FullChargeSelect(orch, "full_charge")])
 
 
 class ProfileSelect(ChefEntity, SelectEntity):
@@ -25,3 +26,16 @@ class ProfileSelect(ChefEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         await self.orch.async_set_profile(option)
+
+
+class FullChargeSelect(ChefEntity, SelectEntity):
+    """Charge complète (N3) : automatique, prochain soleil, cette nuit, maintenant, ignorer."""
+
+    _attr_options = list(FULL_CHARGE_OPTIONS)
+
+    @property
+    def current_option(self) -> str:
+        return self.orch.fullcharge.request
+
+    async def async_select_option(self, option: str) -> None:
+        await self.orch.async_set_full_charge(option)

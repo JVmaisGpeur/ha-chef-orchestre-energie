@@ -20,7 +20,9 @@ Chaque soir, elle répond à trois questions :
 | [ha-zendure-solarflow-local](https://github.com/JVmaisGpeur/ha-zendure-solarflow-local) | ≥ 1.3.0 | Batterie ou Groupe de batteries à piloter |
 | Une prévision solaire | – | Forecast.Solar, Open-Meteo Solar Forecast ou Solcast |
 | Le tableau Énergie de Home Assistant (recommandé) | – | La consommation de la maison y est apprise sans rien saisir |
-| Un capteur de puissance au tableau (facultatif) | – | Par exemple Shelly Pro 3EM, pour la jauge de la carte Énergie |
+| Un capteur de puissance au tableau (facultatif) | – | Par exemple Shelly Pro 3EM, pour la jauge de la carte Énergie et le déverrouillage du routeur |
+| [ha-zendure-solarflow-local](https://github.com/JVmaisGpeur/ha-zendure-solarflow-local) ≥ 1.6.0 (facultatif) | – | Plafonds de charge/décharge, puissance à ne pas couvrir, calibration : consommateurs exclus et routeur |
+| [ha-routeur-f1atb](https://github.com/JVmaisGpeur/ha-routeur-f1atb) ≥ 1.0.0 (facultatif) | – | Routeur solaire F1ATB à piloter |
 
 Avec Forecast.Solar, ajoutez une entrée par orientation de panneaux : le Chef d'orchestre les additionne heure par heure, comme le tableau Énergie.
 
@@ -132,6 +134,29 @@ Elle montre le plan de la nuit et sa raison, les chiffres clés (énergie à cha
 
 Chauffe-eau, PAC, VE… déclarés dans les options avec leur puissance, et si possible un capteur de puissance ou une entité marche/arrêt, un capteur d'énergie et une plage habituelle (`23:00-02:00`). Ils ne sont **jamais coupés** : ils servent à avancer l'heure de début de charge, et à vous prévenir s'ils risquent de dépasser la puissance souscrite. La puissance se saisit en kW.
 
+**Alimenté par les batteries** (oui par défaut) : mettez « non » pour qu'un appareil, par exemple le chauffe-eau, ne soit jamais alimenté par les batteries. Quand il est en marche, le Chef d'orchestre indique sa puissance à Zendure (« Puissance à ne pas couvrir ») : les batteries couvrent le reste de la maison, l'appareil prend le solaire ou le réseau. Son énergie sort aussi du besoin que le plan du soir fait couvrir aux batteries. Nécessite ha-zendure-solarflow-local 1.6.0 ou plus récente et un capteur de mise en route.
+
+## Routeur solaire F1ATB
+
+Avec [ha-routeur-f1atb](https://github.com/JVmaisGpeur/ha-routeur-f1atb), le Chef d'orchestre arbitre entre ballon et batteries. Si l'intégration a déjà des routeurs, l'assistant les liste directement, cochés : vous décochez ceux à ne pas piloter. Chaque routeur retenu devient un gros consommateur que les batteries n'alimentent pas.
+
+- **Batteries toujours d'abord** (par défaut) : le routeur est verrouillé (arrêt forcé de 30 minutes, renouvelé) tant que les batteries peuvent prendre le surplus. Il est libéré, après 2 minutes, quand elles sont pleines ou qu'elles chargent à au moins 95 % de leur puissance maximale avec du surplus qui part au réseau ; il est reverrouillé dès qu'elles se déchargent ou que leur charge passe sous 80 %.
+- **Routeur d'abord** : le ballon chauffe en premier ; les batteries ne chargent que ce qu'il n'absorbe pas, jusqu'à ce qu'il soit chaud.
+- Pendant une plage ON du routeur (chauffe en heures creuses), les batteries ne se déchargent pas. La plage est bloquée si le ballon est déjà chaud ou si le soleil de demain suffit.
+- Si les batteries se déchargent pendant que le routeur chauffe, plus de 2 minutes, le routeur est délesté (sauf exception été : batteries au-dessus de 90 % et soleil de demain suffisant).
+- Le seuil Pw du routeur est vérifié chaque heure : il doit être au moins 20 W sous la cible des batteries (par exemple −20 W).
+- Jamais d'écriture permanente dans le routeur ; il ne prend la main que sur votre accord. Routeur hors ligne, ou réglé sur « Affichage seulement » dans sa carte : aucune commande, et la protection passe par la puissance à ne pas couvrir de Zendure.
+
+## Charge complète et calibration
+
+D'après le support Zendure, les batteries peuvent lancer une calibration automatique du niveau de charge après environ 30 jours sans charge à 100 %. Elle cherche à remplir la batterie, avec le solaire ou à défaut le réseau, et peut s'interrompre puis reprendre. Une charge à 100 % une à deux fois par mois suffit en général à l'éviter ; une décharge complète n'est pas un entretien et use la batterie ; pendant une calibration, laissez l'appareil sous tension, avec une limite de charge à 100 % et aucune puissance de sortie bloquée à 0 W. Si une calibration reste bloquée, contactez le support Zendure (modèle, numéro de série, versions, historique du SOC).
+
+Le Chef d'orchestre compte les jours depuis la dernière charge complète de chaque batterie (capteur « Charge complète »). À partir de 20 jours (réglable dans Avancé), il programme une charge à 100 % : un jour de soleil si la prévision suffit, sinon la nuit d'heures creuses la moins chère, en évitant les veilles de jour Tempo blanc ou rouge. Pendant une calibration, il la laisse aller au bout. La liste « Charge complète » (carte, entité, service `chef_orchestre_energie.full_charge`) permet de choisir : Automatique, Au prochain jour de soleil, Cette nuit, Maintenant, Ignorer pour ce cycle.
+
+## Choisir ce qui est piloté
+
+L'interrupteur général « Pilotage automatique » arrête tout. Sous lui, « Pilotage des batteries » et un « Pilotage du routeur » par routeur permettent de laisser une partie en autonome ; rallumé, l'interrupteur général retrouve ces choix.
+
 ## Notifications
 
 Choisissez un service `notify.*` et le niveau : plan du soir et alertes, alertes uniquement, ou aucune. Les messages suivent la langue de Home Assistant.
@@ -151,8 +176,8 @@ L'interrupteur **Pilotage automatique** (`switch`, `translation_key: auto_contro
 | Attribut | Contenu |
 | --- | --- |
 | `controlled_device_id` | Appareil piloté (batterie ou Groupe) |
-| `controlled_device_ids` | Appareil piloté et chaque batterie membre |
-| `controlled_entities` | Entités que le Chef d'orchestre commande : mode, limite de soutirage, SOC cible, et SOC min/max de chaque batterie |
+| `controlled_device_ids` | Appareils réellement pilotés : batterie ou Groupe et ses membres (si le pilotage des batteries est actif), routeurs dont il a la main |
+| `controlled_entities` | Entités que le Chef d'orchestre commande : mode, limite de soutirage, SOC cible, plafonds et puissance à ne pas couvrir (Zendure ≥ 1.6.0), et SOC min/max de chaque batterie |
 | `interface_version` | `1` |
 
 Quand le pilotage est actif, il se déclare aussi auprès de ha-zendure-solarflow-local (≥ 1.4.0) par le service `zendure_local.set_external_control` (`device_id`, `active`, `controller`, `controlled_keys`), à l'activation puis toutes les 15 minutes, et retire sa déclaration quand le pilotage est coupé. Sans renouvellement pendant 30 minutes, la carte Zendure réaffiche seule tous ses réglages. Avec une version plus ancienne de Zendure, rien n'est déclaré et le reste fonctionne.
@@ -162,7 +187,8 @@ Quand le pilotage est actif, il se déclare aussi auprès de ha-zendure-solarflo
 Le Chef d'orchestre ne lit les autres intégrations que par leurs contrats publics :
 
 - ha-tarifs-electricite (clés en français) : service `tarifs_electricite.previsions`, capteurs `puissance_souscrite`, `offre`, `prix_actuel`, `tempo_demain` ;
-- ha-zendure-solarflow-local (clés en anglais) : `operating_mode`, `import_limit`, `charge_target_soc`, `electric_level`, `usable_capacity`, `available_energy`, `missing_energy`, `battery_power`, `max_charge_power`, `max_discharge_power`, `regulation_state`, et par batterie `min_soc` et `soc_set` (sans eux, la réserve est désactivée avec une alerte dans Réparations).
+- ha-zendure-solarflow-local (clés en anglais) : `operating_mode`, `import_limit`, `charge_target_soc`, `electric_level`, `usable_capacity`, `available_energy`, `missing_energy`, `battery_power`, `max_charge_power`, `max_discharge_power`, `regulation_state`, et par batterie `min_soc` et `soc_set` (sans eux, la réserve est désactivée avec une alerte dans Réparations) ; en 1.6.0, `charge_power_limit`, `discharge_power_limit`, `excluded_power` et par batterie `calibrating`, détectés par leur présence ;
+- ha-routeur-f1atb (domaine `f1atb_routeur`) : services `set_external_control` et `set_mode` ; entités `routed_power`, `routed_energy_total`, `water_temperature`, `target_reached`, `connected`, `control_enabled`, `load_power`, `on_slot_active`, `routing_power_threshold`.
 
 Les clés techniques du Chef d'orchestre (entités, valeurs, attributs, services) sont en anglais ; les noms affichés sont traduits.
 

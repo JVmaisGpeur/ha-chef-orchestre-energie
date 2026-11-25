@@ -27,3 +27,22 @@ force_night:
           min: 0
           max: 100
           unit_of_measurement: "%"
+
+full_charge:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: chef_orchestre_energie
+    when:
+      required: true
+      selector:
+        select:
+          translation_key: full_charge_when
+          options:
+            - "auto"
+            - "next_sun"
+            - "tonight"
+            - "now"
+            - "skip"

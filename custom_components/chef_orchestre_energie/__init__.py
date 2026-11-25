@@ -14,7 +14,14 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.loader import async_get_integration
 
-from .const import DOMAIN, PLATFORMS, SERVICE_FORCE_NIGHT, SERVICE_RECALCULATE
+from .const import (
+    DOMAIN,
+    FULL_CHARGE_OPTIONS,
+    PLATFORMS,
+    SERVICE_FORCE_NIGHT,
+    SERVICE_FULL_CHARGE,
+    SERVICE_RECALCULATE,
+)
 from .manager import Orchestrator
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -25,6 +32,13 @@ SCHEMA_FORCE_NIGHT = vol.Schema(
         vol.Optional("config_entry_id"): cv.string,
         vol.Required("mode"): vol.In(["charge", "idle"]),
         vol.Optional("target_soc"): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+    }
+)
+
+SCHEMA_FULL_CHARGE = vol.Schema(
+    {
+        vol.Optional("config_entry_id"): cv.string,
+        vol.Required("when"): vol.In(FULL_CHARGE_OPTIONS),
     }
 )
 
@@ -70,6 +84,12 @@ async def async_setup(hass: HomeAssistant, config) -> bool:
 
     hass.services.async_register(DOMAIN, SERVICE_RECALCULATE, _recalculate, SCHEMA_RECALCULATE)
     hass.services.async_register(DOMAIN, SERVICE_FORCE_NIGHT, _force_night, SCHEMA_FORCE_NIGHT)
+
+    async def _full_charge(call: ServiceCall) -> None:
+        for orch in _targets(hass, call):
+            await orch.async_set_full_charge(call.data["when"])
+
+    hass.services.async_register(DOMAIN, SERVICE_FULL_CHARGE, _full_charge, SCHEMA_FULL_CHARGE)
     return True
 
 
