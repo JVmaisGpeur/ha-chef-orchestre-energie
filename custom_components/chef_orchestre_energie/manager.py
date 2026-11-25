@@ -262,7 +262,7 @@ class Orchestrator:
         if self.cfg.get(CONF_POWER_SENSOR):
             self._unsubs.append(
                 async_track_state_change_event(
-                    hass, [self.cfg[CONF_POWER_SENSOR]], lambda _e: self._notify_listeners()
+                    hass, [self.cfg[CONF_POWER_SENSOR]], self._on_power_change
                 )
             )
 
@@ -281,6 +281,15 @@ class Orchestrator:
     def add_listener(self, cb: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(cb)
         return lambda: self._listeners.remove(cb)
+
+    @callback
+    def _on_power_change(self, _event: Event) -> None:
+        """Puissance au tableau : mise à jour des entités dans la boucle de Home Assistant.
+
+        Un rappel sans @callback (l'ancien lambda) était exécuté dans un autre fil
+        et y mettait à jour les entités : Home Assistant le signale comme dangereux.
+        """
+        self._notify_listeners()
 
     @callback
     def _notify_listeners(self) -> None:
@@ -1117,6 +1126,8 @@ class Orchestrator:
             "controlled_device_ids": self.controlled_device_ids,
             "controlled_entities": self.controlled_entities,
             "interface_version": INTERFACE_VERSION,
+            # Pour la carte : batteries seules, pilotées ou non (les routeurs n'y figurent pas)
+            "battery_device_ids": self.battery_device_ids,
         }
 
     # ------------------------------------------------------------ puissance à ne pas couvrir (N1)

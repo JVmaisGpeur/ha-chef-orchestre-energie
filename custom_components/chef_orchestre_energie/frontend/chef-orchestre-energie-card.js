@@ -13,7 +13,7 @@
  *   gauge_warn: 80         # % de la puissance souscrite : jauge orange
  *   gauge_crit: 95         # jauge rouge
  */
-const ENERGY_CARD_VERSION = "1.3.0";
+const ENERGY_CARD_VERSION = "1.3.2";
 const CHEF = "chef_orchestre_energie";
 const TARIFF = "tarifs_electricite";
 const ZENDURE = "zendure_local";
@@ -473,7 +473,11 @@ class ChefOrchestreEnergieCard extends HTMLElement {
   /* ---- Batteries (ha-zendure-solarflow-local) */
   _devices({ sw, ents }) {
     const a = sw?.attributes || {};
-    let ids = Array.isArray(a.controlled_device_ids) ? [...a.controlled_device_ids] : [];
+    // Batteries seules : controlled_device_ids contient aussi les routeurs pilotés (v1.3.0)
+    const isBattery = (id) => ents.all.some((e) => e.device_id === id && e.platform === ZENDURE);
+    let ids = Array.isArray(a.battery_device_ids)
+      ? [...a.battery_device_ids]
+      : (Array.isArray(a.controlled_device_ids) ? a.controlled_device_ids : []).filter(isBattery);
     if (!ids.length) {
       // Ancien Chef d'orchestre ou interrupteur absent : toutes les batteries Zendure
       ids = [...new Set(ents.all.filter((e) => e.platform === ZENDURE && e.translation_key === "operating_mode").map((e) => e.device_id))];

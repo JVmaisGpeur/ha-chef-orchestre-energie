@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.2 – 25/11/2026
+
+- **Correction** : la puissance au tableau mettait à jour les entités depuis un autre fil que celui de Home Assistant, ce qui pouvait le faire planter (signalé dans les journaux, `manager.py` ligne 222 en 1.2.0).
+- **Correction** : un routeur piloté apparaissait comme une batterie « Indisponible » dans le bloc Batteries de la carte Énergie. L'interrupteur de pilotage expose maintenant `battery_device_ids`, que la carte utilise ; les batteries restent affichées quand leur pilotage est coupé.
+
 ## 1.3.1 – 25/11/2026
 
 - **Correction** : verrouillage du routeur conforme à ha-routeur-f1atb 1.1.x. La clé `shed` était refusée par `set_external_control`, donc le routeur n'était jamais verrouillé, et `set_mode` partait sans `controller`. Désormais : clé `mode` seule, `set_mode` « off » en tant que pilote, renouvelé toutes les 15 min, et main rendue tout de suite au déverrouillage (plus d'arrêt de 30 min qui traîne).
