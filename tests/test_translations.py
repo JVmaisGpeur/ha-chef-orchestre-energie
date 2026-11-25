@@ -156,6 +156,29 @@ def test_selecteurs_nombre_sans_unite_none():
     assert "unit_of_measurement=unit" not in code
 
 
+def test_carte_routeur_ouverte_par_son_selecteur_de_mode():
+    """La carte f1atb-routeur-card se configure par `entity` (sélecteur de mode), pas par device_id (v1.3.2)."""
+    code = (BASE / "frontend" / "chef-orchestre-energie-card.js").read_text(encoding="utf-8")
+    start = code.index('act === "routercard"')
+    block = code[start:start + 600]
+    assert "entity: sel?.entity_id" in block
+    assert "device_id: btn.dataset.key }" not in block
+
+
+def test_chaque_bloc_de_la_carte_a_son_explication():
+    """Bouton « i » des titres de bloc : une explication par bloc, en français et en anglais."""
+    code = (BASE / "frontend" / "chef-orchestre-energie-card.js").read_text(encoding="utf-8")
+    table = code[code.index("const SECTION_INFO"):]
+    table = table[: table.index("};")]
+    keys = re.findall(r'"(sec_\w+)"', table)
+    icons = re.findall(r'"(mdi:[\w-]+)":', table)
+    assert len(keys) == 5
+    for icon in icons:
+        assert f'this._section("{icon}"' in code, icon
+    for key in keys:
+        assert len(re.findall(rf"^\s+{key}: \"", code, re.M)) == 2, key
+
+
 def test_pas_de_lambda_comme_rappel_d_etat():
     """Un rappel d'état sans @callback tourne hors de la boucle de Home Assistant (v1.2.0, ligne 222)."""
     code = (BASE / "manager.py").read_text(encoding="utf-8")

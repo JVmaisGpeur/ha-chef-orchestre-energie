@@ -13,10 +13,19 @@
  *   gauge_warn: 80         # % de la puissance souscrite : jauge orange
  *   gauge_crit: 95         # jauge rouge
  */
-const ENERGY_CARD_VERSION = "1.3.2";
+const ENERGY_CARD_VERSION = "1.3.3";
 const CHEF = "chef_orchestre_energie";
 const TARIFF = "tarifs_electricite";
 const ZENDURE = "zendure_local";
+const ROUTER = "f1atb_routeur";
+// Icône de chaque bloc → clé de son explication (info.sec_*)
+const SECTION_INFO = {
+  "mdi:cash-clock": "sec_tariff",
+  "mdi:home-battery": "sec_bat",
+  "mdi:water-boiler": "sec_router",
+  "mdi:calendar-clock": "sec_plan",
+  "mdi:flash": "sec_power",
+};
 const BLOCKS = ["show_tariff", "show_batteries", "show_router", "show_plan", "show_power"];
 
 const ENERGY_I18N = {
@@ -89,6 +98,11 @@ const ENERGY_I18N = {
       nominal: "max",
     },
     info: {
+      sec_tariff: "Le prix de l'électricité en ce moment, lu dans l'intégration Tarifs électricité : période (heures pleines ou creuses), couleur Tempo du jour et de demain, et prochain changement de prix. Le Chef d'orchestre s'en sert pour savoir quand la recharge des batteries sur le réseau coûte le moins cher. Le bouton ouvre la carte Tarifs électricité.",
+      sec_bat: "L'état de vos batteries Zendure : niveau de charge, puissance de charge ou de décharge, mode en cours et SOC min / max appliqués, batterie par batterie. Avec l'interrupteur, le Chef d'orchestre pilote leur mode, la recharge de nuit et la réserve ; coupé, Zendure reprend la main avec vos propres réglages. La ligne « Charge complète » indique depuis quand chaque batterie n'a pas été chargée à 100 %. Le bouton ouvre la carte Zendure.",
+      sec_router: "Le routeur solaire F1ATB envoie le surplus des panneaux dans le ballon d'eau chaude (ou un autre appareil). Le Chef d'orchestre arbitre entre le ballon et les batteries : en « Batteries d'abord », il bloque le routeur tant que les batteries peuvent prendre le surplus ; il l'arrête aussi si les batteries se mettent à chauffer le ballon. La ligne montre la température, la puissance routée et ce que fait le Chef d'orchestre. L'interrupteur laisse le routeur en autonome ; le bouton ouvre sa carte.",
+      sec_plan: "Ce que le Chef d'orchestre a décidé pour la prochaine nuit : recharger ou non les batteries sur le réseau en heures creuses, combien et à quelle heure, d'après les prix, la prévision solaire et votre consommation habituelle. Il ne charge que si c'est rentable et s'il manque de l'énergie pour couvrir les heures pleines de demain. Le bouton ouvre le détail heure par heure.",
+      sec_power: "La puissance que la maison appelle en ce moment au tableau électrique, comparée à votre puissance souscrite, avec la marge restante avant que le disjoncteur ne saute. Les gros consommateurs déclarés sont listés avec leur état ; « Réseau » marque ceux que les batteries n'alimentent pas. Pendant la recharge de nuit, le Chef d'orchestre limite la puissance de charge pour ne jamais faire disjoncter.",
       gain: "Économie nette sur chaque kWh acheté en heures creuses, stocké dans la batterie puis rendu à l'heure pleine la plus chère de demain, comparée à l'achat de ce kWh en heures pleines. Le prix payé la nuit et les pertes de la batterie sont déjà déduits. La batterie ne charge la nuit que si ce gain atteint le seuil de rentabilité, et seulement s'il manque de l'énergie pour couvrir les heures pleines.",
       minsoc: "SOC minimum que le Chef d'orchestre impose à chaque batterie pour la nuit. Quand la recharge n'est pas rentable, il passe à la réserve (50 % par défaut) pour ne pas dépenser en heures pleines une énergie qui ne rapporte presque rien. Sinon, c'est votre propre réglage de la batterie, rendu dès que le pilotage est coupé.",
       margin: "Puissance que la maison peut encore appeler avant d'atteindre la puissance souscrite de votre contrat. La jauge passe à l'orange puis au rouge quand on s'en approche (80 % et 95 % par défaut). La charge des batteries ralentit d'elle-même pour garder au moins 10 % de marge.",
@@ -210,6 +224,11 @@ const ENERGY_I18N = {
       nominal: "max",
     },
     info: {
+      sec_tariff: "The current electricity price, read from the Tarifs électricité integration: period (peak or off-peak), today's and tomorrow's Tempo colour, and the next price change. The conductor uses it to know when charging the batteries from the grid costs least. The button opens the Tarifs électricité card.",
+      sec_bat: "The state of your Zendure batteries: charge level, charge or discharge power, current mode and applied min / max SOC, battery by battery. With the switch on, the conductor drives their mode, night charging and reserve; turned off, Zendure takes over again with your own settings. The \"Full charge\" line shows how long since each battery last reached 100 %. The button opens the Zendure card.",
+      sec_router: "The F1ATB solar router sends the panels' surplus into the water heater (or another appliance). The conductor arbitrates between the tank and the batteries: in \"Batteries first\" it blocks the router while the batteries can take the surplus; it also stops it if the batteries start heating the tank. The line shows the temperature, the routed power and what the conductor is doing. The switch leaves the router autonomous; the button opens its card.",
+      sec_plan: "What the conductor decided for the coming night: whether to charge the batteries from the grid during off-peak hours, how much and when, based on prices, the solar forecast and your usual consumption. It only charges when profitable and when energy is missing to cover tomorrow's peak hours. The button opens the hour-by-hour detail.",
+      sec_power: "The power the home is drawing right now at the electrical panel, compared with your subscribed power, with the remaining margin before the breaker trips. Declared large loads are listed with their state; \"Grid\" marks those the batteries do not power. During night charging, the conductor limits the charging power so the breaker never trips.",
       gain: "Net saving on each kWh bought off-peak, stored in the battery and given back at tomorrow's most expensive peak hour, compared with buying that kWh at peak price. The night price and battery losses are already deducted. The battery only charges at night if this gain reaches the profitability threshold, and only if energy is missing to cover the peak hours.",
       minsoc: "Minimum SOC the conductor sets on each battery for the night. When charging is not profitable it is raised to the reserve (50 % by default) so the battery does not spend at peak hours energy that earns almost nothing. Otherwise it is your own battery setting, given back as soon as control is turned off.",
       margin: "Power the home can still draw before reaching the subscribed power of your contract. The gauge turns orange then red as it gets close (80 % and 95 % by default). Battery charging slows down by itself to keep at least a 10 % margin.",
@@ -425,7 +444,10 @@ class ChefOrchestreEnergieCard extends HTMLElement {
   }
 
   _section(icon, title, body, action, toggle) {
-    return `<section><div class="sh"><ha-icon icon="${icon}"></ha-icon><span class="grow">${eEsc(title)}</span>${toggle || ""}</div>${body}${action || ""}</section>`;
+    // Bouton « i » du titre : à quoi sert le bloc et ce qu'il fait
+    const key = SECTION_INFO[icon];
+    const text = key && this._t.info[key];
+    return `<section><div class="sh"><ha-icon icon="${icon}"></ha-icon><span>${eEsc(title)}</span>${text ? this._info(key) : ""}<span class="grow"></span>${toggle || ""}</div>${text ? this._bubble(key, text) : ""}${body}${action || ""}</section>`;
   }
   _info(key) {
     return `<button class="ibtn ${this._openInfo === key ? "open" : ""}" data-act="info" data-key="${eEsc(key)}" aria-label="Information" aria-expanded="${this._openInfo === key}">i</button>`;
@@ -583,9 +605,9 @@ class ChefOrchestreEnergieCard extends HTMLElement {
           ${x.temperature != null ? `<span class="rtemp">${this._n(x.temperature, 0)} °C</span>` : ""}
           <span class="rpow">${x.online && x.routed_power != null ? eEsc(this._w(x.routed_power)) : "—"}</span>
           <span class="chip small ${tone}">${eEsc(state)}</span>
-          <button class="icon open" data-act="routercard" data-key="${eEsc(x.device_id)}" aria-label="${eEsc(r.open)}"><ha-icon icon="mdi:open-in-new"></ha-icon></button>
         </div>
         ${display ? `<div class="note">${eEsc(r.displayNote)}</div>` : ""}
+        <button class="act" data-act="routercard" data-key="${eEsc(x.device_id)}" data-name="${eEsc(x.name || "")}"><ha-icon icon="mdi:open-in-new"></ha-icon><span>${eEsc(r.open)}</span><ha-icon class="chev" icon="mdi:chevron-right"></ha-icon></button>
       </div>`;
     });
     return this._section("mdi:water-boiler", r.title, `<div class="routers">${lines.join("")}</div>`);
@@ -714,7 +736,15 @@ class ChefOrchestreEnergieCard extends HTMLElement {
       const st = this._state(btn.dataset.key);
       this._hass.callService("switch", st?.state === "on" ? "turn_off" : "turn_on", { entity_id: btn.dataset.key });
     } else if (act === "routercard") {
-      this._open("f1atb-routeur-card", { type: "custom:f1atb-routeur-card", device_id: btn.dataset.key }, this._t.router.title);
+      // La carte du routeur se configure par son sélecteur de mode (entity), pas par l'appareil
+      const sel = ents.all.find(
+        (e) => e.platform === ROUTER && e.device_id === btn.dataset.key && e.translation_key === "operating_mode"
+      );
+      this._open(
+        "f1atb-routeur-card",
+        { type: "custom:f1atb-routeur-card", entity: sel?.entity_id, show_tiles: true, show_controls: true, show_planning: true },
+        btn.dataset.name || this._t.router.title
+      );
     } else if (act === "fullmenu") {
       this._menu(ents);
     } else if (act === "pick") {

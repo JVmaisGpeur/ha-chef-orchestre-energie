@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.3 – 25/11/2026
+
+- **Correction** : dans la carte Énergie, le bouton du routeur ouvrait une carte vide (« Choisissez le sélecteur de mode d'un routeur F1ATB ») : la carte du routeur reçoit maintenant son sélecteur de mode (`entity`), avec tuiles, commandes et planning.
+- **Carte Énergie** : un bouton « i » à côté du titre de chaque bloc (Tarif en cours, Batteries, Routeur solaire, Plan pour demain, Puissance au tableau) explique à quoi sert le bloc et ce qu'il fait, en français et en anglais.
+- La petite icône carrée est remplacée par un bouton « Ouvrir la carte du routeur » sous chaque routeur, comme « Ouvrir la carte Zendure ». La pop-up porte le nom du routeur.
+
 ## 1.3.2 – 25/11/2026
 
 - **Correction** : la puissance au tableau mettait à jour les entités depuis un autre fil que celui de Home Assistant, ce qui pouvait le faire planter (signalé dans les journaux, `manager.py` ligne 222 en 1.2.0).
