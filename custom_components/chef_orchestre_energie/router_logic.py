@@ -120,7 +120,11 @@ class RouterLogic:
         return RouterDecision(False, R_HOT if i.target_reached else R_ROUTING)
 
 
-def combine(decisions: list[RouterDecision]) -> tuple[float | None, bool]:
-    """Plafond de charge et interdiction de décharge pour les batteries, tous routeurs confondus."""
-    ceilings = [d.charge_ceiling_w for d in decisions if d.charge_ceiling_w is not None]
+def combine(decisions: list[RouterDecision], *, grid_charging: bool = False) -> tuple[float | None, bool]:
+    """Plafond de charge et interdiction de décharge pour les batteries, tous routeurs confondus.
+
+    Le plafond « routeur d'abord » ne vise que le surplus solaire : pendant une
+    charge réseau (heures creuses, charge complète), il ne s'applique jamais.
+    """
+    ceilings = [] if grid_charging else [d.charge_ceiling_w for d in decisions if d.charge_ceiling_w is not None]
     return (min(ceilings) if ceilings else None), any(d.no_discharge for d in decisions)

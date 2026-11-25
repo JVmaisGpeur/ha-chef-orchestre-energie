@@ -13,7 +13,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOfPower
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .consumption import RELIABILITIES
@@ -107,12 +107,22 @@ async def async_setup_entry(
     hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback
 ) -> None:
     orch: Orchestrator = entry.runtime_data
-    entities: list[SensorEntity] = [ChefSensor(orch, d) for d in SENSORS]
+    async_add_entities([ChefSensor(orch, d) for d in SENSORS])
     from . import sources as src
 
-    for dev in src.battery_units(hass, orch.cfg["battery_device_id"]):
-        entities.append(FullChargeDaysSensor(orch, dev, src.device_name(hass, dev)))
-    async_add_entities(entities)
+    created: set[str] = set()
+
+    @callback
+    def add_full_charge_sensors() -> None:
+        """Un capteur par batterie, y compris celles connues plus tard (Zendure chargé après nous)."""
+        units = orch.units or src.battery_units(hass, orch.cfg["battery_device_id"])
+        new = [dev for dev in units if dev not in created]
+        created.update(new)
+        if new:
+            async_add_entities([FullChargeDaysSensor(orch, dev, src.device_name(hass, dev)) for dev in new])
+
+    add_full_charge_sensors()
+    orch.units_listener = add_full_charge_sensors
 
 
 class ChefSensor(ChefEntity, SensorEntity):

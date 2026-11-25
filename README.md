@@ -140,11 +140,11 @@ Chauffe-eau, PAC, VE… déclarés dans les options avec leur puissance, et si p
 
 Avec [ha-routeur-f1atb](https://github.com/JVmaisGpeur/ha-routeur-f1atb), le Chef d'orchestre arbitre entre ballon et batteries. Si l'intégration a déjà des routeurs, l'assistant les liste directement, cochés : vous décochez ceux à ne pas piloter. Chaque routeur retenu devient un gros consommateur que les batteries n'alimentent pas.
 
-- **Batteries toujours d'abord** (par défaut) : le routeur est verrouillé (arrêt forcé de 30 minutes, renouvelé) tant que les batteries peuvent prendre le surplus. Il est libéré, après 2 minutes, quand elles sont pleines ou qu'elles chargent à au moins 95 % de leur puissance maximale avec du surplus qui part au réseau ; il est reverrouillé dès qu'elles se déchargent ou que leur charge passe sous 80 %.
+- **Batteries toujours d'abord** (par défaut) : le routeur est verrouillé (le Chef d'orchestre prend son mode et le met à l'arrêt, renouvelé toutes les 15 minutes ; rendu aussitôt au déverrouillage) tant que les batteries peuvent prendre le surplus. Il est libéré, après 2 minutes, quand elles sont pleines ou qu'elles chargent à au moins 95 % de leur puissance maximale avec du surplus qui part au réseau ; il est reverrouillé dès qu'elles se déchargent ou que leur charge passe sous 80 %.
 - **Routeur d'abord** : le ballon chauffe en premier ; les batteries ne chargent que ce qu'il n'absorbe pas, jusqu'à ce qu'il soit chaud.
 - Pendant une plage ON du routeur (chauffe en heures creuses), les batteries ne se déchargent pas. La plage est bloquée si le ballon est déjà chaud ou si le soleil de demain suffit.
 - Si les batteries se déchargent pendant que le routeur chauffe, plus de 2 minutes, le routeur est délesté (sauf exception été : batteries au-dessus de 90 % et soleil de demain suffisant).
-- Le seuil Pw du routeur est vérifié chaque heure : il doit être au moins 20 W sous la cible des batteries (par exemple −20 W).
+- Quand le routeur l'expose, son seuil Pw est vérifié chaque heure : il doit être au moins 20 W sous la cible des batteries (par exemple −20 W).
 - Jamais d'écriture permanente dans le routeur ; il ne prend la main que sur votre accord. Routeur hors ligne, ou réglé sur « Affichage seulement » dans sa carte : aucune commande, et la protection passe par la puissance à ne pas couvrir de Zendure.
 
 ## Charge complète et calibration
@@ -180,7 +180,7 @@ L'interrupteur **Pilotage automatique** (`switch`, `translation_key: auto_contro
 | `controlled_entities` | Entités que le Chef d'orchestre commande : mode, limite de soutirage, SOC cible, plafonds et puissance à ne pas couvrir (Zendure ≥ 1.6.0), et SOC min/max de chaque batterie |
 | `interface_version` | `1` |
 
-Quand le pilotage est actif, il se déclare aussi auprès de ha-zendure-solarflow-local (≥ 1.4.0) par le service `zendure_local.set_external_control` (`device_id`, `active`, `controller`, `controlled_keys`), à l'activation puis toutes les 15 minutes, et retire sa déclaration quand le pilotage est coupé. Sans renouvellement pendant 30 minutes, la carte Zendure réaffiche seule tous ses réglages. Avec une version plus ancienne de Zendure, rien n'est déclaré et le reste fonctionne.
+Quand le pilotage est actif, il se déclare aussi auprès de ha-zendure-solarflow-local (≥ 1.5.0) par le service `zendure_local.set_external_control` (`device_id`, `active`, `controller`, `controlled_keys`), à l'activation puis toutes les 15 minutes, et retire sa déclaration quand le pilotage est coupé. Sans renouvellement pendant 30 minutes, la carte Zendure réaffiche seule tous ses réglages. Avec une version plus ancienne de Zendure, rien n'est déclaré et le reste fonctionne.
 
 ### Ce qu'il lit
 
@@ -188,7 +188,7 @@ Le Chef d'orchestre ne lit les autres intégrations que par leurs contrats publi
 
 - ha-tarifs-electricite (clés en français) : service `tarifs_electricite.previsions`, capteurs `puissance_souscrite`, `offre`, `prix_actuel`, `tempo_demain` ;
 - ha-zendure-solarflow-local (clés en anglais) : `operating_mode`, `import_limit`, `charge_target_soc`, `electric_level`, `usable_capacity`, `available_energy`, `missing_energy`, `battery_power`, `max_charge_power`, `max_discharge_power`, `regulation_state`, et par batterie `min_soc` et `soc_set` (sans eux, la réserve est désactivée avec une alerte dans Réparations) ; en 1.6.0, `charge_power_limit`, `discharge_power_limit`, `excluded_power` et par batterie `calibrating`, détectés par leur présence ;
-- ha-routeur-f1atb (domaine `f1atb_routeur`) : services `set_external_control` et `set_mode` ; entités `routed_power`, `routed_energy_total`, `water_temperature`, `target_reached`, `connected`, `control_enabled`, `load_power`, `on_slot_active`, `routing_power_threshold`.
+- ha-routeur-f1atb ≥ 1.1.0 (domaine `f1atb_routeur`) : services `set_external_control` (clé `mode` seulement) et `set_mode` (avec `controller`) ; entités `routed_power`, `routed_energy_total`, `water_temperature`, `target_reached`, `connected`, `control_enabled`, `status`, `water_heater_power` (`load_power`, `on_slot_active`, `routing_power_threshold` lues si elles existent).
 
 Les clés techniques du Chef d'orchestre (entités, valeurs, attributs, services) sont en anglais ; les noms affichés sont traduits.
 

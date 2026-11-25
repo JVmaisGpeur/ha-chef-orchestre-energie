@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "chef_orchestre_energie"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 PLATFORMS = ["binary_sensor", "button", "number", "select", "sensor", "switch"]
 
 # Intégrations lues et versions minimales (contrats, interface 1)
@@ -58,15 +58,18 @@ ROUTER_KEYS = (
     "external_control",
     "connected",
     "control_enabled",
-    # demandés au cahier des charges du routeur pour la v1.3.0 du Chef d'orchestre
+    # ha-routeur-f1atb 1.1.x : état (« on_slot » pendant une plage ON) et puissance du ballon
+    "status",
+    "water_heater_power",
+    # demandés au cahier des charges du routeur, pas encore livrés (lus s'ils apparaissent)
     "load_power",
     "on_slot_active",
     "routing_power_threshold",
 )
 ROUTER_REQUIRED = ("routed_power", "connected")
-ROUTER_CONTROLLED_KEYS = ["mode", "shed"]
-ROUTER_FORCE_MIN = 30  # forçages de 30 min, renouvelés
-ROUTER_RENEW_MIN = 15
+# Clés acceptées par set_external_control : mode, boost, target_temperature
+ROUTER_CONTROLLED_KEYS = ["mode"]
+ROUTER_RENEW_MIN = 15  # la prise de main expire au bout de 30 min
 ROUTER_USAGES = ["water_heater", "pool", "heating", "other"]
 INTERFACE_VERSION = 1
 

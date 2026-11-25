@@ -140,11 +140,11 @@ Water heater, heat pump, EV… declared in the options with their power and, if 
 
 With [ha-routeur-f1atb](https://github.com/JVmaisGpeur/ha-routeur-f1atb), the conductor arbitrates between the water tank and the batteries. If that integration already has routers, the setup lists them directly, ticked: untick the ones not to drive. Each router kept becomes a large load the batteries do not power.
 
-- **Batteries always first** (default): the router is locked (30-minute forced stop, renewed) while the batteries can take the surplus. It is released, after 2 minutes, when they are full or charging at 95 % or more of their maximum power with surplus going to the grid; it is locked again as soon as they discharge or their charge drops below 80 %.
+- **Batteries always first** (default): the router is locked (the conductor takes its mode and sets it to off, renewed every 15 minutes; released at once when unlocked) while the batteries can take the surplus. It is released, after 2 minutes, when they are full or charging at 95 % or more of their maximum power with surplus going to the grid; it is locked again as soon as they discharge or their charge drops below 80 %.
 - **Router first**: the tank heats first; the batteries only charge what it does not absorb, until it is hot.
 - During a router ON slot (off-peak heating), the batteries do not discharge. The slot is blocked if the tank is already hot or tomorrow's sun is enough.
 - If the batteries discharge while the router heats for more than 2 minutes, the router is shed (summer exception: batteries above 90 % and enough sun tomorrow).
-- The router Pw threshold is checked every hour: it must be at least 20 W below the battery target (for example −20 W).
+- When the router exposes it, its Pw threshold is checked every hour: it must be at least 20 W below the battery target (for example −20 W).
 - Never a permanent write into the router; it only takes control with your agreement. Router offline, or set to "Display only" in its card: no command, and protection goes through Zendure's power not to cover.
 
 ## Full charge and calibration
@@ -180,14 +180,15 @@ The **Automatic control** switch (`switch`, `translation_key: auto_control`) is 
 | `controlled_entities` | Entities the conductor commands: mode, import limit, target SOC, and min/max SOC of each battery |
 | `interface_version` | `1` |
 
-While control is on, it also declares itself to ha-zendure-solarflow-local (≥ 1.4.0) through the `zendure_local.set_external_control` service (`device_id`, `active`, `controller`, `controlled_keys`), when turned on and then every 15 minutes, and withdraws when control is turned off. Without renewal for 30 minutes, the Zendure card shows all its settings again by itself. With an older Zendure version nothing is declared and everything else works.
+While control is on, it also declares itself to ha-zendure-solarflow-local (≥ 1.5.0) through the `zendure_local.set_external_control` service (`device_id`, `active`, `controller`, `controlled_keys`), when turned on and then every 15 minutes, and withdraws when control is turned off. Without renewal for 30 minutes, the Zendure card shows all its settings again by itself. With an older Zendure version nothing is declared and everything else works.
 
 ### What it reads
 
 The conductor reads the other integrations only through their public contracts:
 
 - ha-tarifs-electricite (French keys): `tarifs_electricite.previsions` service, `puissance_souscrite`, `offre`, `prix_actuel`, `tempo_demain` sensors;
-- ha-zendure-solarflow-local (English keys): `operating_mode`, `import_limit`, `charge_target_soc`, `electric_level`, `usable_capacity`, `available_energy`, `missing_energy`, `battery_power`, `max_charge_power`, `max_discharge_power`, `regulation_state`, and per battery `min_soc` and `soc_set` (without them the reserve is disabled with a Repairs alert).
+- ha-zendure-solarflow-local (English keys): `operating_mode`, `import_limit`, `charge_target_soc`, `electric_level`, `usable_capacity`, `available_energy`, `missing_energy`, `battery_power`, `max_charge_power`, `max_discharge_power`, `regulation_state`, and per battery `min_soc` and `soc_set` (without them the reserve is disabled with a Repairs alert);
+- ha-routeur-f1atb ≥ 1.1.0 (`f1atb_routeur` domain): `set_external_control` (key `mode` only) and `set_mode` (with `controller`) services; `routed_power`, `routed_energy_total`, `water_temperature`, `target_reached`, `connected`, `control_enabled`, `status`, `water_heater_power` entities (`load_power`, `on_slot_active`, `routing_power_threshold` read if present).
 
 The conductor's own technical keys (entities, values, attributes, services) are in English; displayed names are translated.
 

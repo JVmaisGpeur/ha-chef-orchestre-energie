@@ -53,7 +53,6 @@ from .const import (
     LOAD_ROUTER,
     ROUTER_CONTROLLED_KEYS,
     ROUTER_DOMAIN,
-    ROUTER_FORCE_MIN,
     ROUTER_KEYS,
     ROUTER_RENEW_MIN,
     ROUTER_REQUIRED,
@@ -168,6 +167,7 @@ class Orchestrator:
         # SOC min / max de chaque batterie (E2)
         self.keeper = SocKeeper()
         self.units: list[str] = []  # appareils des batteries réelles
+        self.units_listener: Callable[[], None] | None = None  # capteurs par batterie (sensor.py)
         self.unit_soc: dict[str, dict[str, str]] = {}  # appareil → {min_soc, soc_set}
         self.e2_ok = False
         self.full_charge = False
@@ -220,6 +220,7 @@ class Orchestrator:
         self.excluded_w = 0.0
         self._max_cache: dict[str, float] = {}
         self._excluded_pending: Callable[[], None] | None = None
+        self._battery_mode: str | None = None  # dernier mode commandé (plafond routeur)
         # Routeurs F1ATB (N5)
         self.routers: list[dict[str, Any]] = list(self.cfg.get(CONF_ROUTERS) or [])
         self.router_entities: dict[str, dict[str, str]] = {}
@@ -465,6 +466,8 @@ class Orchestrator:
         self.sources_ok = ok
         # E2 : SOC min / max de chaque batterie réelle
         self.units = src.battery_units(self.hass, self.cfg[CONF_BATTERY_DEVICE])
+        if self.units_listener:
+            self.units_listener()
         self.unit_soc = {
             dev: src.find_entities(self.hass, BATTERY_DOMAIN, UNIT_SOC_KEYS, device_id=dev)
             for dev in self.units
@@ -567,6 +570,13 @@ class Orchestrator:
         for load in self.cfg.get(CONF_LOADS) or []:
             power = float(load.get(LOAD_POWER) or 0)
             running = False
+            router = load.get(LOAD_ROUTER)
+            if router:
+                # Un routeur chauffe au surplus solaire : il ne pèse sur le soutirage
+                # que pendant une plage ON du planning (chauffe sur le réseau)
+                if when < now + STEP and self._router_on_slot(self.router_entities.get(router, {})):
+                    total += power
+                continue
             if when < now + STEP:
                 p = src.state_float(self.hass, load.get(LOAD_POWER_SENSOR))
                 if p is not None:
@@ -738,7 +748,9 @@ class Orchestrator:
         if not self.e2_ok:
             self.full_charge = False
             plan = compute_plan_with_reserve(steps, battery, settings, override, None)
-            action = self._decide_full_charge(now, daylight_overflow(plan) >= battery.capacity_kwh * 0.05)
+            action = self._decide_full_charge(
+                now, daylight_overflow(plan) >= battery.capacity_kwh * 0.05, plan.window_end
+            )
             if action == ACTION_TONIGHT and override is None:
                 plan = compute_plan_with_reserve(steps, battery, settings, Override("charge", 100.0), None)
             return plan
@@ -758,7 +770,7 @@ class Orchestrator:
         # N3 : le soleil suffit-il à monter à 100 % sans réseau ?
         need = battery.capacity_kwh * max(0.0, 100.0 - user_max) / 100
         sunny = daylight_overflow(plan) >= max(need, 0.2)
-        action = self._decide_full_charge(now, sunny)
+        action = self._decide_full_charge(now, sunny, plan.window_end)
         if action == ACTION_TONIGHT and override is None:
             full = replace(base, soc_max=100.0, grid_soc_max=100.0)
             plan = compute_plan_with_reserve(steps, full, settings, Override("charge", 100.0), reserve)
@@ -774,9 +786,13 @@ class Orchestrator:
     def calibrating_units(self) -> list[str]:
         return [u for u, eid in self.unit_cal.items() if src.state_str(self.hass, eid) == "on"]
 
-    def _decide_full_charge(self, now: datetime, sunny: bool) -> str | None:
+    def _decide_full_charge(self, now: datetime, sunny: bool, window_end: datetime | None = None) -> str | None:
         """Charge complète à programmer (N3) : soleil, cette nuit, maintenant ou rien."""
-        tempo = (src.state_str(self.hass, self.tariff_entities.get("tempo_demain")) or "").lower()
+        # Couleur du jour qui suit la nuit de charge : après minuit, c'est aujourd'hui
+        key = "tempo_demain"
+        if window_end is not None and dt_util.as_local(window_end).date() == dt_util.as_local(now).date():
+            key = "tempo_aujourdhui"
+        tempo = (src.state_str(self.hass, self.tariff_entities.get(key)) or "").lower()
         tonight_ok = tempo not in ("blanc", "rouge", "white", "red")
         action, units, alert = self.fullcharge.decide(
             self.units,
@@ -875,7 +891,8 @@ class Orchestrator:
                 days: dict = defaultdict(float)
                 for ts, v in series(sid).items():
                     days[ts.date()] += v
-                recent = sorted(days)[-7:]
+                # Jours complets seulement : la journée en cours fausserait la moyenne
+                recent = sorted(d for d in days if d < end.date())[-7:]
                 if recent:
                     self.router_daily_kwh[dev] = round(sum(days[d] for d in recent) / len(recent), 2)
         self._solar_actual_ids = [self.cfg[CONF_SOLAR_ACTUAL]] if self.cfg.get(CONF_SOLAR_ACTUAL) else flows["solar"]
@@ -970,6 +987,7 @@ class Orchestrator:
             # de début (le SOC a monté), mais on ne s'arrête pas en chemin.
             # La batterie s'arrête seule au SOC cible.
             mode = MODE_GRID_CHARGE
+        self._battery_mode = mode
         select_id = self.battery_entities.get("operating_mode")
         current = src.state_str(self.hass, select_id)
         if current == "group":
@@ -1165,7 +1183,10 @@ class Orchestrator:
         """Plafonds de charge / décharge (routeur) et puissance à ne pas couvrir (N1, N5)."""
         if not (self.ceilings_ok and self.battery_piloted):
             return
-        ceiling, no_discharge = combine(list(self.router_decisions.values()))
+        # Charge réseau en cours : le plafond « routeur d'abord » est levé
+        ceiling, no_discharge = combine(
+            list(self.router_decisions.values()), grid_charging=self._battery_mode == MODE_GRID_CHARGE
+        )
         if self.calibrating_units:
             no_discharge = False  # jamais de puissance bloquée à 0 W pendant une calibration
         maxc = self._entity_max(self.ceiling_entities.get("charge_power_limit"))
@@ -1205,9 +1226,9 @@ class Orchestrator:
             online = connected == "on" if ents.get("connected") else bool(ents)
             enabled = src.state_str(hass, ents.get("control_enabled")) != "off"
             routed = src.power_w(hass, ents.get("routed_power"))
-            load_w = src.state_float(hass, ents.get("load_power")) or self._router_load_w(dev)
+            load_w = self._router_power_w(dev, ents)
             reached = src.state_str(hass, ents.get("target_reached")) == "on"
-            on_slot = src.state_str(hass, ents.get("on_slot_active")) == "on"
+            on_slot = self._router_on_slot(ents)
             need = self.router_daily_kwh.get(dev) or float(self.cfg[CONF_ROUTER_DAILY_KWH])
             spare = (surplus or 0.0) - (range_kwh if priority == "battery_first" else 0.0)
             piloted = (
@@ -1259,6 +1280,20 @@ class Orchestrator:
         self.router_status = status
         await self._async_check_router_threshold(now)
 
+    def _router_power_w(self, device_id: str, ents: dict[str, str]) -> float | None:
+        """Puissance du ballon : `load_power`, sinon `water_heater_power` (1.1.x), sinon la saisie."""
+        for key in ("load_power", "water_heater_power"):
+            value = src.power_w(self.hass, ents.get(key))
+            if value:
+                return value
+        return self._router_load_w(device_id)
+
+    def _router_on_slot(self, ents: dict[str, str]) -> bool:
+        """Plage ON du planning : `on_slot_active`, sinon l'état « on_slot » du capteur `status` (1.1.x)."""
+        if ents.get("on_slot_active"):
+            return src.state_str(self.hass, ents["on_slot_active"]) == "on"
+        return src.state_str(self.hass, ents.get("status")) == "on_slot"
+
     def _router_load_w(self, device_id: str) -> float | None:
         for load in self.cfg.get(CONF_LOADS) or []:
             if load.get(LOAD_ROUTER) == device_id:
@@ -1274,36 +1309,46 @@ class Orchestrator:
             return False
 
     async def _async_router_apply(self, dev: str, dec: RouterDecision, now: datetime) -> None:
-        """Prise de main renouvelée ; arrêt forcé de 30 min seulement quand il faut verrouiller."""
-        sent = self._router_sent.get(dev, {})
-        keys = list(ROUTER_CONTROLLED_KEYS) if dec.lock else []
-        renew = not sent or now - sent["at"] >= timedelta(minutes=ROUTER_RENEW_MIN)
-        changed = sent.get("keys") != keys or sent.get("lock") != dec.lock
-        if not (renew or changed):
+        """Verrouillage : prise de la clé « mode » puis mode « off » en tant que pilote.
+
+        Contrat ha-routeur-f1atb (≥ 1.1.0) : seules `mode`, `boost` et
+        `target_temperature` sont acceptées dans `controlled_keys` ; `set_mode`
+        doit porter `controller` (sans lui, l'appel est refusé ou change le mode
+        de l'utilisateur pour de bon). La prise de main expire seule au bout de
+        30 min, d'où le renouvellement toutes les 15 min. Au déverrouillage, la
+        main est rendue aussitôt : le routeur reprend le mode de l'utilisateur.
+        """
+        sent = self._router_sent.get(dev)
+        if not dec.lock:
+            if sent:
+                await self._async_release_routers([dev], reset_logic=False)
             return
+        if sent and now - sent["at"] < timedelta(minutes=ROUTER_RENEW_MIN):
+            return
+        keys = list(ROUTER_CONTROLLED_KEYS)
         ok = await self._router_call(
             EXTERNAL_CONTROL_SERVICE,
             {"device_id": dev, "active": True, "controller": CONTROLLER_NAME, "controlled_keys": keys},
         )
-        if ok and dec.lock:
+        if ok:
             ok = await self._router_call(
-                "set_mode", {"device_id": dev, "mode": "off", "duration": ROUTER_FORCE_MIN}
+                "set_mode", {"device_id": dev, "mode": "off", "controller": CONTROLLER_NAME}
             )
         if ok:
-            self._router_sent[dev] = {"keys": keys, "lock": dec.lock, "at": now}
+            self._router_sent[dev] = {"keys": keys, "lock": True, "at": now}
 
-    async def _async_release_routers(self, devices: list[str] | None = None) -> None:
+    async def _async_release_routers(self, devices: list[str] | None = None, *, reset_logic: bool = True) -> None:
         for dev in list(devices if devices is not None else self._router_sent):
             if dev in self._router_sent:
                 await self._router_call(
                     EXTERNAL_CONTROL_SERVICE,
-                    {"device_id": dev, "active": False, "controller": CONTROLLER_NAME, "controlled_keys": []},
+                    {"device_id": dev, "active": False, "controller": CONTROLLER_NAME},
                 )
                 self._router_sent.pop(dev, None)
-            self.router_decisions.pop(dev, None)
-            logic = self.router_logic.get(dev)
-            if logic:
-                self.router_logic[dev] = RouterLogic()
+            if reset_logic:
+                self.router_decisions.pop(dev, None)
+                if dev in self.router_logic:
+                    self.router_logic[dev] = RouterLogic()
 
     async def _async_check_router_threshold(self, now: datetime) -> None:
         """Seuil Pw du routeur au moins 20 W sous la cible des batteries (0 W), chaque heure."""

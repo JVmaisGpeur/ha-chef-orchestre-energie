@@ -76,3 +76,13 @@ def test_combinaison_des_routeurs():
     b = rl.RouterDecision(False, rl.R_BOOST, no_discharge=True)
     assert rl.combine([a, b]) == (0.0, True)
     assert rl.combine([]) == (None, False)
+
+
+def test_charge_reseau_leve_le_plafond_routeur_d_abord():
+    # La nuit, le routeur ne route rien : sans cette règle, la charge en HC serait bloquée à 0 W
+    lg = rl.RouterLogic()
+    d = lg.step(inp(0, priority=rl.ROUTER_FIRST, routed_w=0))
+    assert d.charge_ceiling_w == 0.0
+    assert rl.combine([d], grid_charging=True) == (None, False)
+    boost = rl.RouterDecision(False, rl.R_BOOST, no_discharge=True)
+    assert rl.combine([d, boost], grid_charging=True) == (None, True)

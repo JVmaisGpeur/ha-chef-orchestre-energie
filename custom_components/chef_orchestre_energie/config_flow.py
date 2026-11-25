@@ -290,7 +290,7 @@ def _guess_usage(name: str) -> str:
 def _router_load(hass, router: dict[str, Any], previous: dict | None = None) -> dict:
     """Ligne « gros consommateur » d'un routeur (N5) : préremplie, batteries à non."""
     ents = src.find_entities(hass, ROUTER_DOMAIN, ROUTER_KEYS, device_id=router["device_id"])
-    power = src.state_float(hass, ents.get("load_power"))
+    power = src.power_w(hass, ents.get("load_power")) or src.power_w(hass, ents.get("water_heater_power"))
     load = dict(previous or {})
     load.setdefault(LOAD_BATTERY, False)
     load.update(

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.1 – 25/11/2026
+
+- **Correction** : verrouillage du routeur conforme à ha-routeur-f1atb 1.1.x. La clé `shed` était refusée par `set_external_control`, donc le routeur n'était jamais verrouillé, et `set_mode` partait sans `controller`. Désormais : clé `mode` seule, `set_mode` « off » en tant que pilote, renouvelé toutes les 15 min, et main rendue tout de suite au déverrouillage (plus d'arrêt de 30 min qui traîne).
+- **Correction** : en « Routeur d'abord », le plafond de charge des batteries (0 W tant que le ballon n'absorbe pas tout) bloquait aussi la charge réseau des heures creuses et la charge complète ; il est maintenant levé pendant toute charge réseau.
+- **Correction** : plage ON lue sur le capteur `status` (« on_slot ») et puissance du ballon sur `water_heater_power` quand `on_slot_active` et `load_power` n'existent pas.
+- **Correction** : un routeur ne compte plus dans la limite de soutirage, sauf pendant une plage ON.
+- **Correction** : le besoin quotidien du ballon ne compte plus la journée en cours.
+- **Correction** : après minuit, la « veille de jour cher » pour la charge complète se lit sur la couleur Tempo du jour même.
+- **Correction** : les capteurs « Charge complète » des batteries d'un Groupe apparaissent aussi quand Zendure démarre après le Chef d'orchestre.
+
+### Interface
+
+- ha-routeur-f1atb ≥ 1.1.0 : `f1atb_routeur.set_external_control` (clé `mode`) et `set_mode` (avec `controller`) ; entités lues `routed_power`, `routed_energy_total`, `water_temperature`, `target_reached`, `connected`, `control_enabled`, `status`, `water_heater_power`, et si elles existent `load_power`, `on_slot_active`, `routing_power_threshold`.
+- La déclaration de pilote auprès de Zendure demande ha-zendure-solarflow-local ≥ 1.5.0 (documentation corrigée).
+
 ## 1.3.0 – 25/11/2026
 
 - **Routeur solaire F1ATB** (ha-routeur-f1atb) : routeurs listés directement à l'installation, priorité « batteries d'abord » (verrouillage par arrêts forcés de 30 min renouvelés) ou « routeur d'abord » (plafond de charge des batteries), décharge interdite pendant les plages ON, plage ON bloquée si le ballon est chaud ou si le soleil de demain suffit, délestage quand les batteries chauffent le ballon (exception été), contrôle horaire du seuil Pw, mode « Affichage seulement » respecté. Nouvel écran « Routeurs solaires » dans l'assistant et les options.
