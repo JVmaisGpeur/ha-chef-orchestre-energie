@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.5 – 26/11/2026
+
+- **Correction (R1)** : la réserve de SOC d'une nuit non rentable ne s'applique plus que pendant ses heures creuses. Elle était posée dès le calcul du plan (à midi par exemple) : un jour rouge Tempo, les batteries s'arrêtaient à 50 % avant 22:00 et la maison achetait au tarif rouge. Maintenant, en heures pleines, les batteries descendent toujours jusqu'au SOC min de l'utilisateur ; la réserve est posée au début des heures creuses et levée à leur fin.
+- La réserve n'est jamais posée sur un créneau plus cher que le prix des heures creuses + le seuil de rentabilité (heure pleine tardive, jour spécial).
+- Une batterie déjà sous la réserve au début des heures creuses garde son niveau : la réserve l'empêche de descendre, sans la faire charger sur le réseau.
+- Une pose et une levée par nuit et par batterie (mémoire flash) ; la levée passe toujours.
+- **Carte Énergie** : la ligne « SOC min appliqué » montre la valeur en cours et, quand une réserve est prévue, « réserve 50 % de 22:00 à 06:00 » en dessous. Le bouton « i » du bloc Batteries et celui de la ligne l'expliquent.
+- Nouveaux attributs du plan de la nuit : `reserve_from`, `reserve_until`, `reserve_active`. `applied_min_soc` donne désormais la valeur en vigueur.
+
 ## 1.3.4 – 26/11/2026
 
 - **Correction** : le chauffe-eau ne chauffait pas pendant la plage ON du routeur (rattrapage en heures creuses). Le Chef d'orchestre reconnaissait la plage ON à l'état « on_slot » du routeur ; or un routeur qu'il verrouille affiche « blocked », jamais « on_slot » : il restait donc verrouillé toute la plage. La plage se lit maintenant sur le capteur « Plage en cours » (`planning`) du routeur, verrouillé ou non.

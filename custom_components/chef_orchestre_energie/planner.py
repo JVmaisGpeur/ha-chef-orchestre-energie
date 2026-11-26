@@ -13,7 +13,7 @@ Vocabulaire :
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import math
 
@@ -148,6 +148,8 @@ class Plan:
     charge_end: datetime | None = None
     price_gap: float | None = None  # meilleur écart HP − (HC ÷ rendement + usure), €/kWh
     reserve_soc: float | None = None  # SOC minimum relevé (E2) si appliqué
+    reserve_from: datetime | None = None  # R1 (v1.3.5) : la réserve ne joue que pendant
+    reserve_until: datetime | None = None  # les heures creuses de la nuit non rentable
     soc_min: float | None = None  # SOC minimum utilisé par la simulation
     soc_max: float | None = None  # SOC maximum utilisé par la simulation
     charge_start: datetime | None = None
@@ -507,11 +509,13 @@ def compute_plan_with_reserve(
     override: Override | None = None,
     reserve_soc: float | None = None,
 ) -> Plan:
-    """Plan complet avec la réserve de SOC (E2).
+    """Plan complet avec la réserve de SOC (E2, R1 en v1.3.5).
 
     Si le plan est non rentable et que la réserve dépasse le SOC minimum de
-    l'utilisateur, la simulation est refaite avec la réserve : seule l'énergie
-    au-dessus d'elle peut alors être rendue aux heures pleines.
+    l'utilisateur, la réserve est prévue pour les heures creuses de cette nuit
+    seulement (`reserve_from` → `reserve_until`). En heures pleines, avant comme
+    après, les batteries descendent jusqu'au SOC minimum de l'utilisateur : la
+    simulation reste donc celle du SOC minimum de l'utilisateur.
     """
     plan = compute_plan(steps, battery, settings, override)
     if (
@@ -519,10 +523,45 @@ def compute_plan_with_reserve(
         and plan.state == PLAN_NOT_PROFITABLE
         and reserve_soc > battery.soc_min
     ):
-        raised = replace(battery, soc_min=min(reserve_soc, battery.soc_max))
-        plan = compute_plan(steps, raised, settings, override)
-        plan.reserve_soc = raised.soc_min
+        span = reserve_span(steps, plan, settings)
+        if span is not None:
+            plan.reserve_soc = min(reserve_soc, battery.soc_max)
+            plan.reserve_from, plan.reserve_until = span
     return plan
+
+
+def reserve_span(steps: list[Step], plan: Plan, settings: Settings) -> tuple[datetime, datetime] | None:
+    """Créneau de la réserve : les heures creuses de la nuit, d'un seul tenant.
+
+    Garde-fou : jamais sur un pas plus cher que le prix des heures creuses + le
+    seuil de rentabilité (heure pleine tardive, jour spécial). La réserve couvre la
+    première suite de pas bon marché de la fenêtre : une pose et une levée par nuit.
+    """
+    if plan.window_start is None or plan.window_end is None or not steps:
+        return None
+    window = [st for st in steps if plan.window_start <= st.start < plan.window_end]
+    prices = [st.price for st in window if st.price is not None]
+    if not window or not prices:
+        return None
+    price_max = sum(prices) / len(prices) + settings.gain_threshold
+    step = _step_len(steps)
+    start = end = None
+    for st in window:
+        cheap = st.price is None or st.price <= price_max + 1e-9
+        if cheap and start is None:
+            start = st.start
+        if start is not None:
+            if not cheap:
+                break
+            end = st.start + step
+    return (start, end) if start is not None else None
+
+
+def reserve_at(plan: Plan | None, when: datetime) -> float | None:
+    """Réserve à appliquer à cet instant (None : SOC minimum de l'utilisateur)."""
+    if plan is None or plan.reserve_soc is None or plan.reserve_from is None or plan.reserve_until is None:
+        return None
+    return plan.reserve_soc if plan.reserve_from <= when < plan.reserve_until else None
 
 
 def daylight_overflow(plan: Plan, solar_min: float = SOLAR_MIN_KWH) -> float:

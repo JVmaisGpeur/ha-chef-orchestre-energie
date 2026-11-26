@@ -24,7 +24,7 @@
         "data_description": {
           "gain_threshold": "The battery only charges off-peak if each kWh given back earns at least this amount (0.02 by default).",
           "efficiency": "85 % by default, then learned over 30 days from the battery counters.",
-          "reserve_soc": "Min SOC applied to the batteries when the night is not profitable (50 % by default). Your own settings come back as soon as it is profitable or control is turned off."
+          "reserve_soc": "Min SOC applied to the batteries during the off-peak hours of a night that is not profitable (50 % by default). At peak hours the batteries always go down to your own min SOC. Your own settings come back at the end of the off-peak hours, as soon as it is profitable, or when control is turned off."
         }
       },
       "loads": {
@@ -132,7 +132,7 @@
           "wear": "Battery price ÷ (capacity × announced cycles). 0 to ignore.",
           "gain_threshold": "A night grid charge only happens if each kWh returned earns at least this much (0.02 by default).",
           "profile": "Safety margin added to the peak-hour need: cautious 20 %, balanced 10 %, economical 0 %.",
-          "reserve_soc": "Min SOC applied when the night is not profitable (50 % by default)."
+          "reserve_soc": "Min SOC applied during the off-peak hours of a night that is not profitable (50 % by default); at peak hours, your own min SOC."
         }
       },
       "power": {

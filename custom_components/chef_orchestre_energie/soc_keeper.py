@@ -19,6 +19,7 @@ rendre son réglage à l'utilisateur).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -32,6 +33,7 @@ class Target:
     current: float | None
     lo: float = 0.0  # bornes de l'entité (min_soc : 0-50, soc_set : 70-100)
     hi: float = 100.0
+    soc: float | None = None  # niveau de charge de la batterie (R1 : réserve plafonnée au niveau courant)
 
 
 class SocKeeper:
@@ -79,7 +81,14 @@ class SocKeeper:
         reserve: float | None,
         full_charge: bool,
     ) -> list[tuple[str, float]]:
-        """Écritures à faire pour appliquer la réserve et la règle du SOC max."""
+        """Écritures à faire pour appliquer la réserve et la règle du SOC max.
+
+        `reserve` : réserve à appliquer maintenant (R1 : seulement pendant les heures
+        creuses d'une nuit non rentable, None sinon). Une batterie déjà sous la
+        réserve garde son niveau : la réserve l'empêche de descendre, sans la faire
+        charger. Une fois posée, la valeur ne bouge plus jusqu'à la levée : une pose
+        et une levée par nuit.
+        """
         out: list[tuple[str, float]] = []
         for t in targets:
             self._observe(t)
@@ -88,7 +97,13 @@ class SocKeeper:
             if t.current is None or user is None or eid in self.hold:
                 continue
             if t.kind == "min":
-                wanted = max(user, reserve) if reserve is not None else user
+                if reserve is None:
+                    wanted = user
+                elif eid in self.applied:
+                    wanted = self.applied[eid]  # réserve déjà posée cette nuit
+                else:
+                    level = reserve if t.soc is None else min(reserve, math.floor(t.soc))
+                    wanted = max(user, level)
             else:
                 wanted = 100.0 if full_charge else user
             wanted = min(max(wanted, t.lo), t.hi)

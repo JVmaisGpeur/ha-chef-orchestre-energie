@@ -64,7 +64,7 @@ Before each off-peak period starts (and whenever an input changes), it simulates
 
 ### Min and max SOC (reserve)
 
-- **Non-profitable night**: each battery's min SOC is raised to the **reserve** (50 % by default, "Reserve if not profitable" entity) if its own setting is lower. The battery keeps its energy instead of spending it at a loss.
+- **Non-profitable night**: during **that night's off-peak hours only**, each battery's min SOC is raised to the **reserve** (50 % by default, "Reserve if not profitable" entity) if its own setting is lower. The battery keeps its energy for the next peak hours instead of spending it while the grid is cheap. The reserve is set when the off-peak hours start and lifted when they end: at peak hours the batteries always go down to your own min SOC. A battery already below the reserve keeps its level (the reserve never charges from the grid), and the reserve is never set on a slot more expensive than the off-peak price + the profitability threshold. One set and one lift per night and per battery.
 - **Profitable night**: each battery gets its min SOC back at its exact value.
 - **Plenty of sun**: if the solar forecast exceeds what the battery can store under your max SOC, the max SOC goes to 100 % for the day, then back to your value at the start of the next off-peak hours. Grid charging never exceeds your maximum.
 - Your values are remembered by the conductor and restored when control is turned off, on restart and when the integration is removed. If you change a SOC during the reserve, the new value is kept.
@@ -79,7 +79,7 @@ While charging, the import limit is `subscribed power × (1 − margin)`, with a
 | Automatic control | Off: no command is sent anymore |
 | Caution profile | Cautious, balanced, economical |
 | Profitability threshold | €/kWh, adjustable live |
-| Reserve if not profitable | Min SOC applied on non-profitable nights (0 to 50 %) |
+| Reserve if not profitable | Min SOC applied during the off-peak hours of non-profitable nights (0 to 50 %) |
 | Panel power | Power drawn, with subscribed power, margin and large-load states as attributes |
 | Night plan | Charge, rest, not profitable, nothing to cover, suspended, missing data; `reason` and `hourly_plan` attributes |
 | Energy to charge, Target state of charge, Charge start | Tonight's plan |

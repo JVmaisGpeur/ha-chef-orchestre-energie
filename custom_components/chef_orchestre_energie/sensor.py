@@ -144,15 +144,20 @@ class ChefSensor(ChefEntity, SensorEntity):
         if key == "night_plan":
             if plan is None:
                 return None
+            reserve = self.orch.reserve_now()
             return {
                 "reason": plan.reason,
                 "missing": self.orch.missing,
                 "price_gap": plan.price_gap,
                 "charge_end": plan.charge_end.isoformat() if plan.charge_end else None,
                 "reserve_soc": plan.reserve_soc,
+                # R1 (v1.3.5) : réserve prévue pour les heures creuses de la nuit seulement
+                "reserve_from": plan.reserve_from.isoformat() if plan.reserve_from else None,
+                "reserve_until": plan.reserve_until.isoformat() if plan.reserve_until else None,
+                "reserve_active": reserve is not None,
                 "user_min_soc": self.orch.user_soc.get("min"),
                 "user_max_soc": self.orch.user_soc.get("max"),
-                "applied_min_soc": plan.reserve_soc if plan.reserve_soc is not None else self.orch.user_soc.get("min"),
+                "applied_min_soc": self.orch.applied_min_soc(reserve),
                 "applied_max_soc": 100 if self.orch.full_charge else self.orch.user_soc.get("max"),
                 "full_charge": self.orch.full_charge,
                 "gain_threshold": self.orch.gain_threshold,

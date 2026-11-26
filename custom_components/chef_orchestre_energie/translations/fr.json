@@ -24,7 +24,7 @@
         "data_description": {
           "gain_threshold": "La batterie ne charge en heures creuses que si chaque kWh rendu rapporte au moins ce montant (0,02 par défaut).",
           "efficiency": "85 % par défaut, puis appris sur 30 jours à partir des compteurs de la batterie.",
-          "reserve_soc": "SOC min appliqué aux batteries quand la nuit n'est pas rentable (50 % par défaut). Vos réglages reviennent dès que c'est rentable ou que le pilotage est coupé."
+          "reserve_soc": "SOC min appliqué aux batteries pendant les heures creuses d'une nuit non rentable (50 % par défaut). En heures pleines, les batteries descendent toujours jusqu'à votre propre SOC min. Vos réglages reviennent à la fin des heures creuses, dès que c'est rentable ou quand le pilotage est coupé."
         }
       },
       "loads": {
@@ -132,7 +132,7 @@
           "wear": "Prix de la batterie ÷ (capacité × nombre de cycles annoncé). 0 pour l'ignorer.",
           "gain_threshold": "La batterie ne charge la nuit que si chaque kWh rendu rapporte au moins ce montant (0,02 par défaut).",
           "profile": "Marge ajoutée au besoin des heures pleines : prudent 20 %, équilibré 10 %, économe 0 %.",
-          "reserve_soc": "SOC min appliqué quand la nuit n'est pas rentable (50 % par défaut)."
+          "reserve_soc": "SOC min appliqué pendant les heures creuses d'une nuit non rentable (50 % par défaut) ; en heures pleines, votre propre SOC min."
         }
       },
       "power": {

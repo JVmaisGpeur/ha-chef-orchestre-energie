@@ -141,6 +141,7 @@ from .planner import (
     Settings,
     Step,
     compute_plan_with_reserve,
+    reserve_at,
     daylight_overflow,
     import_limit_w,
     wants_full_charge,
@@ -772,12 +773,30 @@ class Orchestrator:
     def _soc_targets(self) -> list[Target]:
         out: list[Target] = []
         for dev in self.units:
+            level = src.state_float(self.hass, self.unit_level.get(dev))
             for key, kind in (("min_soc", "min"), ("soc_set", "max")):
                 eid = self.unit_soc.get(dev, {}).get(key)
                 if eid:
                     lo, hi = UNIT_SOC_BOUNDS[key]
-                    out.append(Target(eid, kind, src.state_float(self.hass, eid), lo, hi))
+                    out.append(Target(eid, kind, src.state_float(self.hass, eid), lo, hi, level))
         return out
+
+    def reserve_now(self, now: datetime | None = None) -> float | None:
+        """R1 : réserve en vigueur maintenant (heures creuses d'une nuit non rentable), sinon None."""
+        return reserve_at(self.plan, now or dt_util.now())
+
+    def applied_min_soc(self, reserve: float | None) -> float | None:
+        """SOC min en vigueur : celui de l'utilisateur, ou la réserve posée cette nuit.
+
+        Valeur réellement posée (moyenne des batteries) : une batterie déjà sous la
+        réserve garde son niveau, et rien n'est écrit si elle est au SOC min.
+        """
+        user = self.user_soc.get("min")
+        if reserve is None:
+            return user
+        mins = {v.get("min_soc") for v in self.unit_soc.values()}
+        posed = [v for eid, v in self.keeper.applied.items() if eid in mins]
+        return round(sum(posed) / len(posed), 1) if posed else user
 
     def _plan_with_soc_rules(self, steps, battery: Battery, settings, override) -> Plan:
         """Plan avec la réserve de SOC min (E2) et la règle du SOC max (D5).
@@ -1058,7 +1077,7 @@ class Orchestrator:
         """Réserve de SOC min et SOC max à 100 % (E2), batterie par batterie."""
         if not self.e2_ok:
             return
-        writes = self.keeper.writes(self._soc_targets(), now, plan.reserve_soc, self.full_charge)
+        writes = self.keeper.writes(self._soc_targets(), now, reserve_at(plan, now), self.full_charge)
         for entity_id, value in writes:
             await self.hass.services.async_call(
                 "number", "set_value", {"entity_id": entity_id, "value": value}, blocking=True

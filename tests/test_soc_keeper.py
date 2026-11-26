@@ -60,3 +60,34 @@ def test_restitution_et_memoire_persistante():
 def test_bornes_de_l_entite():
     k = K.SocKeeper()
     assert k.writes([tgt("n.min", "min", 10)], T0, reserve=70, full_charge=False) == [("n.min", 50)]
+
+
+# ---------------------------------------------------------------- R1 (v1.3.5)
+def tgt_soc(eid, cur, soc):
+    return K.Target(eid, "min", cur, 0, 50, soc)
+
+
+def test_r1_batterie_deja_sous_la_reserve_garde_son_niveau():
+    k = K.SocKeeper()
+    # 12,4 % au début des heures creuses : la réserve s'arrête à 12 %, pas de charge réseau
+    assert k.writes([tgt_soc("n.min", 5, 12.4)], T0, reserve=50, full_charge=False) == [("n.min", 12)]
+    # Batterie déjà au SOC min de l'utilisateur : rien à écrire
+    k2 = K.SocKeeper()
+    assert k2.writes([tgt_soc("n.min", 5, 4.0)], T0, reserve=50, full_charge=False) == []
+
+
+def test_r1_une_pose_et_une_levee_par_nuit():
+    """Contrôle toutes les minutes de 21:00 à 07:00, réserve de 22:00 à 06:00 : deux écritures."""
+    k = K.SocKeeper()
+    start = datetime(2026, 11, 26, 21, 0, tzinfo=TZ)
+    pose, levee = datetime(2026, 11, 26, 22, 0, tzinfo=TZ), datetime(2026, 11, 27, 6, 0, tzinfo=TZ)
+    current, soc, writes = 5.0, 60.0, []
+    for minute in range(10 * 60):
+        now = start + timedelta(minutes=minute)
+        reserve = 50 if pose <= now < levee else None
+        soc = max(45.0, soc - 0.05)  # la batterie bouge un peu pendant la nuit
+        out = k.writes([tgt_soc("n.min", current, soc)], now, reserve=reserve, full_charge=False)
+        for _eid, value in out:
+            current = value
+            writes.append((now, value))
+    assert writes == [(pose, 50), (levee, 5.0)]

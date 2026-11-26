@@ -64,7 +64,7 @@ Avant chaque début d'heures creuses (et dès qu'une donnée change), il simule 
 
 ### SOC minimum et maximum (réserve)
 
-- **Nuit non rentable** : le SOC minimum de chaque batterie passe à la **réserve** (50 % par défaut, entité « Réserve si non rentable ») si son propre réglage est plus bas. La batterie garde ainsi son énergie au lieu de la dépenser à perte.
+- **Nuit non rentable** : pendant les **heures creuses de cette nuit seulement**, le SOC minimum de chaque batterie passe à la **réserve** (50 % par défaut, entité « Réserve si non rentable ») si son propre réglage est plus bas. La batterie garde ainsi son énergie pour les prochaines heures pleines au lieu de la dépenser quand le réseau est bon marché. La réserve est posée au début des heures creuses et levée à leur fin : en heures pleines, les batteries descendent toujours jusqu'à votre SOC minimum. Une batterie déjà sous la réserve garde son niveau (la réserve ne fait pas charger sur le réseau), et la réserve n'est jamais posée sur un créneau plus cher que les heures creuses + le seuil de rentabilité. Une pose et une levée par nuit et par batterie.
 - **Nuit rentable** : chaque batterie retrouve son SOC minimum à sa valeur exacte.
 - **Soleil abondant** : si la prévision solaire dépasse ce que la batterie peut stocker sous votre SOC maximum, le SOC maximum passe à 100 % pour la journée, puis revient à votre valeur au début des heures creuses suivantes. La charge réseau ne dépasse jamais votre maximum.
 - Vos valeurs sont mémorisées par le Chef d'orchestre et restituées quand le pilotage est coupé, au redémarrage et à la suppression de l'intégration. Si vous changez un SOC pendant la réserve, la nouvelle valeur est retenue.
@@ -79,7 +79,7 @@ Pendant la charge, la limite de soutirage vaut `puissance souscrite × (1 − ma
 | Pilotage automatique | Coupé, plus aucune commande n'est envoyée |
 | Profil de prudence | Prudent, équilibré, économe |
 | Seuil de rentabilité | €/kWh, modifiable à chaud |
-| Réserve si non rentable | SOC minimum appliqué les nuits non rentables (0 à 50 %) |
+| Réserve si non rentable | SOC minimum appliqué pendant les heures creuses des nuits non rentables (0 à 50 %) |
 | Puissance au tableau | Puissance appelée, avec la puissance souscrite, la marge et l'état des gros consommateurs en attributs |
 | Plan de la nuit | Charge, repos, non rentable, rien à couvrir, suspendu, données manquantes ; attributs `reason` et `hourly_plan` |
 | Énergie à charger, SOC cible, Début de charge | Le plan de la nuit |

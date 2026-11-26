@@ -211,31 +211,83 @@ def test_limite_de_soutirage(kva, margin, tri, expected):
 
 # ---------------------------------------------------------------- E2 (v1.2.0)
 def test_reserve_si_non_rentable():
+    # R1 (v1.3.5) : la réserve est prévue pour les heures creuses de la nuit seulement
     steps = build(hp=0.25, hc=0.21)
     plan = P.compute_plan_with_reserve(steps, bat(soc=80), P.Settings(), reserve_soc=50)
     assert plan.state == P.PLAN_NOT_PROFITABLE
-    assert plan.reserve_soc == 50 and plan.soc_min == 50
-    # la batterie ne descend jamais sous la réserve
-    assert min(sp.soc for sp in plan.steps) >= 50 - 1e-6
+    assert plan.reserve_soc == 50 and plan.soc_min == 10
+    assert plan.reserve_from == datetime(2026, 11, 23, 23, 0, tzinfo=TZ)
+    assert plan.reserve_until == datetime(2026, 11, 24, 6, 0, tzinfo=TZ)
+    # en heures pleines, la batterie descend jusqu'au SOC min de l'utilisateur
+    assert min(sp.soc for sp in plan.steps) < 50
 
 
 def test_reserve_ignoree_si_rentable():
     plan = P.compute_plan_with_reserve(build(), bat(soc=80, cap=20), P.Settings(), reserve_soc=50)
     assert plan.state in (P.PLAN_CHARGE, P.PLAN_IDLE)
     assert plan.reserve_soc is None and plan.soc_min == 10
+    assert plan.reserve_from is None and plan.reserve_until is None
+    assert all(P.reserve_at(plan, sp.start) is None for sp in plan.steps)
 
 
-def test_reserve_sous_le_soc_actuel():
-    # SOC déjà sous la réserve : plus de décharge, mais le solaire est stocké
+def test_reserve_ne_fait_pas_charger():
+    # SOC déjà sous la réserve : la réserve ne crée aucune charge réseau
     steps = build(hp=0.25, hc=0.21, solar_kw=lambda t: sunny(t) / 2)
     plan = P.compute_plan_with_reserve(steps, bat(soc=30), P.Settings(), reserve_soc=50)
     assert plan.reserve_soc == 50
-    socs = [sp.soc for sp in plan.steps]
-    # tant que la batterie est sous la réserve, elle ne décharge pas
-    first_above = next(i for i, v in enumerate(socs) if v > 50)
-    assert all(sp.discharge_kwh == 0 for sp in plan.steps[:first_above])
-    # une fois remontée, elle ne redescend jamais sous la réserve
-    assert min(socs[first_above:]) >= 50 - 1e-6
+    assert plan.state == P.PLAN_NOT_PROFITABLE
+    assert all(sp.charge_kwh == 0 for sp in plan.steps)
+
+
+# ---------------------------------------------------------------- R1 (v1.3.5)
+def tempo_rouge_26_11(late_peak=False):
+    """26/11/2026 jour rouge (HP 0,7295 jusqu'à 22:00), HC rouges 0,1615, 27/11 blanc (HP 0,1921)."""
+    hc_hours = lambda t: t.hour >= 22 or t.hour < 6
+    steps = build(start=datetime(2026, 11, 26, 12, 0, tzinfo=TZ), hours=36, hc_hours=hc_hours, cons_kw=1.0)
+    for st in steps:
+        if st.off_peak:
+            st.price = 0.1615
+        else:
+            st.price = 0.7295 if st.start.day == 26 else 0.1921
+        if late_peak and st.start.day == 26 and st.start.hour == 22 and st.start.minute < 30:
+            st.price = 0.7295  # heure pleine tardive (jour spécial) marquée creuse
+    return steps
+
+
+def test_r1_jour_rouge_reserve_seulement_en_heures_creuses():
+    plan = P.compute_plan_with_reserve(
+        tempo_rouge_26_11(), bat(soc=40, cap=10, soc_min=5), P.Settings(gain_threshold=0.05), reserve_soc=50
+    )
+    assert plan.state == P.PLAN_NOT_PROFITABLE
+    at = lambda d, h, m=0: datetime(2026, 11, d, h, m, tzinfo=TZ)
+    # à 12:00 : SOC min de l'utilisateur, la batterie peut descendre jusqu'à 5 % avant 22:00
+    assert P.reserve_at(plan, at(26, 12)) is None
+    assert P.reserve_at(plan, at(26, 21, 59)) is None
+    assert plan.soc_min == 5
+    assert min(sp.soc for sp in plan.steps if sp.start < at(26, 22)) <= 5 + 1e-6
+    # 22:00 → 06:00 : réserve de 50 %, levée à 06:00
+    assert (plan.reserve_from, plan.reserve_until) == (at(26, 22), at(27, 6))
+    assert P.reserve_at(plan, at(26, 22)) == 50
+    assert P.reserve_at(plan, at(27, 5, 59)) == 50
+    assert P.reserve_at(plan, at(27, 6)) is None
+
+
+def test_r1_jamais_de_reserve_sur_une_heure_pleine_tardive():
+    plan = P.compute_plan_with_reserve(
+        tempo_rouge_26_11(late_peak=True), bat(soc=40, cap=10, soc_min=5), P.Settings(gain_threshold=0.05), reserve_soc=50
+    )
+    at = lambda d, h, m=0: datetime(2026, 11, d, h, m, tzinfo=TZ)
+    assert P.reserve_at(plan, at(26, 22)) is None
+    assert P.reserve_at(plan, at(26, 22, 15)) is None
+    assert plan.reserve_from == at(26, 22, 30) and plan.reserve_until == at(27, 6)
+
+
+def test_r1_reserve_pendant_les_heures_creuses_en_cours():
+    # Calcul fait à 23:30, en pleine nuit : réserve tout de suite, jusqu'à 06:00
+    steps = build(start=datetime(2026, 11, 23, 23, 30, tzinfo=TZ), hp=0.25, hc=0.21)
+    plan = P.compute_plan_with_reserve(steps, bat(soc=80), P.Settings(), reserve_soc=50)
+    assert P.reserve_at(plan, datetime(2026, 11, 23, 23, 30, tzinfo=TZ)) == 50
+    assert plan.reserve_until == datetime(2026, 11, 24, 6, 0, tzinfo=TZ)
 
 
 def test_soc_max_100_si_le_soleil_deborde():

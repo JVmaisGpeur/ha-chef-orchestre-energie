@@ -13,7 +13,7 @@
  *   gauge_warn: 80         # % de la puissance souscrite : jauge orange
  *   gauge_crit: 95         # jauge rouge
  */
-const ENERGY_CARD_VERSION = "1.3.4";
+const ENERGY_CARD_VERSION = "1.3.5";
 const CHEF = "chef_orchestre_energie";
 const TARIFF = "tarifs_electricite";
 const ZENDURE = "zendure_local";
@@ -80,7 +80,7 @@ const ENERGY_I18N = {
       threshold: "seuil",
       slot: "Créneau de charge",
       minSoc: "SOC min appliqué",
-      reserve: "réserve",
+      reserveSpan: (soc, a, b) => `réserve ${soc} % de ${a} à ${b}`,
       fullCharge: "SOC max à 100 % (soleil)",
       detail: "Voir le détail du plan",
     },
@@ -99,12 +99,12 @@ const ENERGY_I18N = {
     },
     info: {
       sec_tariff: "Le prix de l'électricité en ce moment, lu dans l'intégration Tarifs électricité : période (heures pleines ou creuses), couleur Tempo du jour et de demain, et prochain changement de prix. Le Chef d'orchestre s'en sert pour savoir quand la recharge des batteries sur le réseau coûte le moins cher. Le bouton ouvre la carte Tarifs électricité.",
-      sec_bat: "L'état de vos batteries Zendure : niveau de charge, puissance de charge ou de décharge, mode en cours et SOC min / max appliqués, batterie par batterie. Avec l'interrupteur, le Chef d'orchestre pilote leur mode, la recharge de nuit et la réserve ; coupé, Zendure reprend la main avec vos propres réglages. La ligne « Charge complète » indique depuis quand chaque batterie n'a pas été chargée à 100 %. Le bouton ouvre la carte Zendure.",
+      sec_bat: "L'état de vos batteries Zendure : niveau de charge, puissance de charge ou de décharge, mode en cours et SOC min / max appliqués, batterie par batterie. Avec l'interrupteur, le Chef d'orchestre pilote leur mode, la recharge de nuit et la réserve (qui ne joue que pendant les heures creuses d'une nuit non rentable) ; coupé, Zendure reprend la main avec vos propres réglages. La ligne « Charge complète » indique depuis quand chaque batterie n'a pas été chargée à 100 %. Le bouton ouvre la carte Zendure.",
       sec_router: "Le routeur solaire F1ATB envoie le surplus des panneaux dans le ballon d'eau chaude (ou un autre appareil). Le Chef d'orchestre arbitre entre le ballon et les batteries : en « Batteries d'abord », il bloque le routeur tant que les batteries peuvent prendre le surplus ; il l'arrête aussi si les batteries se mettent à chauffer le ballon. La ligne montre la température, la puissance routée et ce que fait le Chef d'orchestre. Quand une plage ON (chauffe en heures creuses) arrive dans les 24 h, une note dit si le Chef d'orchestre la laissera chauffer ou la bloquera (soleil du lendemain suffisant, ballon déjà chaud). Avec l'option « Le Chef d'orchestre peut déplacer la chauffe » (Configurer → Routeurs solaires), il déplace la chauffe dans les mêmes heures creuses si la plage tombe pendant la charge des batteries ou dépasserait la puissance souscrite. L'interrupteur laisse le routeur en autonome ; le bouton ouvre sa carte.",
       sec_plan: "Ce que le Chef d'orchestre a décidé pour la prochaine nuit : recharger ou non les batteries sur le réseau en heures creuses, combien et à quelle heure, d'après les prix, la prévision solaire et votre consommation habituelle. Il ne charge que si c'est rentable et s'il manque de l'énergie pour couvrir les heures pleines de demain. Le bouton ouvre le détail heure par heure.",
       sec_power: "La puissance que la maison appelle en ce moment au tableau électrique, comparée à votre puissance souscrite, avec la marge restante avant que le disjoncteur ne saute. Les gros consommateurs déclarés sont listés avec leur état ; « Réseau » marque ceux que les batteries n'alimentent pas. Pendant la recharge de nuit, le Chef d'orchestre limite la puissance de charge pour ne jamais faire disjoncter.",
       gain: "Économie nette sur chaque kWh acheté en heures creuses, stocké dans la batterie puis rendu à l'heure pleine la plus chère de demain, comparée à l'achat de ce kWh en heures pleines. Le prix payé la nuit et les pertes de la batterie sont déjà déduits. La batterie ne charge la nuit que si ce gain atteint le seuil de rentabilité, et seulement s'il manque de l'énergie pour couvrir les heures pleines.",
-      minsoc: "SOC minimum que le Chef d'orchestre impose à chaque batterie pour la nuit. Quand la recharge n'est pas rentable, il passe à la réserve (50 % par défaut) pour ne pas dépenser en heures pleines une énergie qui ne rapporte presque rien. Sinon, c'est votre propre réglage de la batterie, rendu dès que le pilotage est coupé.",
+      minsoc: "SOC minimum en vigueur sur les batteries. En heures pleines, c'est toujours votre propre réglage : les batteries peuvent descendre jusque-là. Quand la recharge de la nuit n'est pas rentable, le Chef d'orchestre pose la réserve (50 % par défaut) pendant ses heures creuses seulement, pour ne pas dépenser l'énergie des batteries quand le réseau est bon marché ; il la lève à la fin des heures creuses. Une batterie déjà sous la réserve garde son niveau, sans charger sur le réseau. Votre réglage revient aussi dès que le pilotage est coupé.",
       margin: "Puissance que la maison peut encore appeler avant d'atteindre la puissance souscrite de votre contrat. La jauge passe à l'orange puis au rouge quand on s'en approche (80 % et 95 % par défaut). La charge des batteries ralentit d'elle-même pour garder au moins 10 % de marge.",
       full: "D'après le support Zendure, les batteries peuvent lancer une calibration automatique après environ 30 jours sans charge à 100 %. Une charge complète une à deux fois par mois suffit en général à l'éviter : le Chef d'orchestre la programme un jour de soleil ou une nuit d'heures creuses bon marché. Aucune décharge complète n'est provoquée, elle userait la batterie.",
     },
@@ -217,7 +217,7 @@ const ENERGY_I18N = {
       threshold: "threshold",
       slot: "Charging slot",
       minSoc: "Applied min SOC",
-      reserve: "reserve",
+      reserveSpan: (soc, a, b) => `reserve ${soc} % from ${a} to ${b}`,
       fullCharge: "Max SOC at 100 % (sun)",
       detail: "See the plan in detail",
     },
@@ -236,12 +236,12 @@ const ENERGY_I18N = {
     },
     info: {
       sec_tariff: "The current electricity price, read from the Tarifs électricité integration: period (peak or off-peak), today's and tomorrow's Tempo colour, and the next price change. The conductor uses it to know when charging the batteries from the grid costs least. The button opens the Tarifs électricité card.",
-      sec_bat: "The state of your Zendure batteries: charge level, charge or discharge power, current mode and applied min / max SOC, battery by battery. With the switch on, the conductor drives their mode, night charging and reserve; turned off, Zendure takes over again with your own settings. The \"Full charge\" line shows how long since each battery last reached 100 %. The button opens the Zendure card.",
+      sec_bat: "The state of your Zendure batteries: charge level, charge or discharge power, current mode and applied min / max SOC, battery by battery. With the switch on, the conductor drives their mode, night charging and reserve (which only applies during the off-peak hours of a non-profitable night); turned off, Zendure takes over again with your own settings. The \"Full charge\" line shows how long since each battery last reached 100 %. The button opens the Zendure card.",
       sec_router: "The F1ATB solar router sends the panels' surplus into the water heater (or another appliance). The conductor arbitrates between the tank and the batteries: in \"Batteries first\" it blocks the router while the batteries can take the surplus; it also stops it if the batteries start heating the tank. The line shows the temperature, the routed power and what the conductor is doing. When an ON slot (off-peak heating) comes up within 24 h, a note says whether the conductor will let it heat or block it (enough sun tomorrow, tank already hot). With the option \"The conductor may move the off-peak heating\" (Configure → Solar routers), it moves the heating within the same off-peak hours when the slot falls during the battery charge or would exceed the subscribed power. The switch leaves the router autonomous; the button opens its card.",
       sec_plan: "What the conductor decided for the coming night: whether to charge the batteries from the grid during off-peak hours, how much and when, based on prices, the solar forecast and your usual consumption. It only charges when profitable and when energy is missing to cover tomorrow's peak hours. The button opens the hour-by-hour detail.",
       sec_power: "The power the home is drawing right now at the electrical panel, compared with your subscribed power, with the remaining margin before the breaker trips. Declared large loads are listed with their state; \"Grid\" marks those the batteries do not power. During night charging, the conductor limits the charging power so the breaker never trips.",
       gain: "Net saving on each kWh bought off-peak, stored in the battery and given back at tomorrow's most expensive peak hour, compared with buying that kWh at peak price. The night price and battery losses are already deducted. The battery only charges at night if this gain reaches the profitability threshold, and only if energy is missing to cover the peak hours.",
-      minsoc: "Minimum SOC the conductor sets on each battery for the night. When charging is not profitable it is raised to the reserve (50 % by default) so the battery does not spend at peak hours energy that earns almost nothing. Otherwise it is your own battery setting, given back as soon as control is turned off.",
+      minsoc: "Minimum SOC currently in force on the batteries. At peak hours it is always your own setting: the batteries can go down to it. When the night charge is not profitable, the conductor sets the reserve (50 % by default) during its off-peak hours only, so battery energy is not spent while the grid is cheap; it lifts it when the off-peak hours end. A battery already below the reserve keeps its level, without charging from the grid. Your setting also comes back as soon as control is turned off.",
       margin: "Power the home can still draw before reaching the subscribed power of your contract. The gauge turns orange then red as it gets close (80 % and 95 % by default). Battery charging slows down by itself to keep at least a 10 % margin.",
       full: "According to Zendure support, the batteries may start an automatic calibration after about 30 days without a 100 % charge. A full charge once or twice a month usually avoids it: the conductor schedules it on a sunny day or a cheap off-peak night. No full discharge is forced, as it would wear the battery.",
     },
@@ -674,7 +674,11 @@ class ChefOrchestreEnergieCard extends HTMLElement {
     const thr = eNum(pa.gain_threshold);
     const gapTxt = gap === null || pa.tariff_ok === false ? "—" : `${this._n(gap, 3)} €/kWh${thr !== null ? ` (${t.threshold} ${this._n(thr, 3)})` : ""}`;
     const minSoc = eNum(pa.applied_min_soc);
-    const minTxt = minSoc === null ? "—" : `${this._n(minSoc, 0)} %${pa.reserve_soc != null ? ` (${t.reserve})` : ""}`;
+    const minTxt = minSoc === null ? "—" : `${this._n(minSoc, 0)} %`;
+    // R1 (v1.3.5) : réserve des heures creuses d'une nuit non rentable, sous la valeur en cours
+    const rFrom = this._time(pa.reserve_from);
+    const rUntil = this._time(pa.reserve_until);
+    const reserveTxt = pa.reserve_soc != null && rFrom && rUntil ? t.reserveSpan(this._n(pa.reserve_soc, 0), rFrom, rUntil) : "";
     const rows = [
       [t.solar, this._kwh(val("forecast_solar")?.state)],
       [t.consumption, this._kwh(val("forecast_consumption")?.state)],
@@ -682,11 +686,12 @@ class ChefOrchestreEnergieCard extends HTMLElement {
       [t.gap, gapTxt, gap !== null && thr !== null && pa.tariff_ok !== false ? (gap >= thr ? "good" : "bad") : "", "gain"],
       [t.slot, slot],
       [t.minSoc, minTxt, "", "minsoc"],
+      ...(reserveTxt ? [["", reserveTxt, "sub"]] : []),
       ...(pa.full_charge_planned && on && t.full[pa.full_charge_planned] ? [[t.fullRow, t.full[pa.full_charge_planned], "warn"]] : []),
     ];
     const body = `<div class="verdict ${tone}">${eEsc(label)}</div>
       <div class="rows">${rows
-        .map(([k, v, cls, info]) => `<div class="row"><span class="lab">${eEsc(k)}${info ? this._info(info) : ""}</span><b class="${cls || ""}">${eEsc(v)}</b></div>${info ? this._bubble(info, this._t.info[info]) : ""}`)
+        .map(([k, v, cls, info]) => cls === "sub" ? `<div class="row sub"><span></span><span class="muted small">${eEsc(v)}</span></div>` : `<div class="row"><span class="lab">${eEsc(k)}${info ? this._info(info) : ""}</span><b class="${cls || ""}">${eEsc(v)}</b></div>${info ? this._bubble(info, this._t.info[info]) : ""}`)
         .join("")}
       ${pa.full_charge && on ? `<div class="note piloted"><ha-icon icon="mdi:white-balance-sunny"></ha-icon>${eEsc(t.fullCharge)}</div>` : ""}
       </div>`;
@@ -884,6 +889,8 @@ section{margin-top:16px;padding-top:14px;border-top:1px solid var(--divider-colo
 .row{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
 .row span{color:var(--secondary-text-color)}
 .row b{font-weight:500;text-align:right}
+.row.sub{margin-top:-4px}
+.row.sub .small{font-size:.82rem;text-align:right}
 b.good{color:var(--success-color,#43a047)} b.bad,b.crit{color:var(--error-color,#db4437)} b.warn{color:var(--warning-color,#ffa000)}
 .big{font-size:1.5rem;font-weight:500}
 .tariff{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px}
