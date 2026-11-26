@@ -9,7 +9,7 @@ BASE = pathlib.Path(__file__).resolve().parent.parent / "custom_components" / "c
 def test_plage_on_lue_sur_le_capteur_planning():
     """Un routeur verrouillé affiche « blocked », jamais « on_slot » : la plage ON se lit sur `planning` (v1.3.4)."""
     const = (BASE / "const.py").read_text(encoding="utf-8")
-    keys = const.split("ROUTER_KEYS = (")[1].split(")")[0]
+    keys = const.split("ROUTER_KEYS = (")[1].split("\n)")[0]
     assert '"planning"' in keys
     manager = (BASE / "manager.py").read_text(encoding="utf-8")
     body = manager.split("def _router_on_slot")[1].split("\n    def ")[0]
