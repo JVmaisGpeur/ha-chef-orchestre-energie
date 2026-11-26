@@ -45,6 +45,7 @@ from .const import (
     CONF_FULL_CHARGE_AUTO,
     CONF_FULL_CHARGE_DAYS,
     CONF_ROUTER_DAILY_KWH,
+    CONF_ROUTER_SHIFT,
     CONF_ROUTER_PRIORITY,
     CONF_ROUTERS,
     CONF_SUMMER_SOC,
@@ -112,7 +113,18 @@ from .fullcharge import (
     FULL_SOC,
     FullChargeTracker,
 )
-from .router_logic import RouterDecision, RouterInputs, RouterLogic, combine
+from .router_logic import (
+    OUTLOOK_HEAT,
+    OUTLOOK_HOT,
+    NightStep,
+    RouterDecision,
+    RouterInputs,
+    RouterLogic,
+    choose_heat_window,
+    combine,
+    next_on_slot,
+    on_slot_outlook,
+)
 from .planner import (
     MODE_GRID_CHARGE,
     MODE_OFF,
@@ -227,6 +239,9 @@ class Orchestrator:
         self.router_logic: dict[str, RouterLogic] = {}
         self.router_decisions: dict[str, RouterDecision] = {}
         self.router_status: list[dict[str, Any]] = []
+        # Prochaine plage ON de chaque routeur et fenêtre de chauffe retenue (v1.3.4)
+        self.router_windows: dict[str, dict[str, Any]] = {}
+        self._router_heat_done: dict[str, datetime] = {}  # fenêtre déplacée déjà terminée (ballon chaud)
         self.router_daily_kwh: dict[str, float] = {}
         self._router_sent: dict[str, dict[str, Any]] = {}
         self._router_threshold_check: datetime | None = None
@@ -574,16 +589,27 @@ class Orchestrator:
         self._issue("subscribed_power", kva is None, "subscribed_power_missing")
         return kva
 
-    def _loads_w(self, when: datetime, now: datetime) -> float:
+    def _loads_w(self, when: datetime, now: datetime, exclude: str | None = None) -> float:
         total = 0.0
         for load in self.cfg.get(CONF_LOADS) or []:
             power = float(load.get(LOAD_POWER) or 0)
             running = False
             router = load.get(LOAD_ROUTER)
+            if router and router == exclude:
+                continue
             if router:
                 # Un routeur chauffe au surplus solaire : il ne pèse sur le soutirage
-                # que pendant une plage ON du planning (chauffe sur le réseau)
-                if when < now + STEP and self._router_on_slot(self.router_entities.get(router, {})):
+                # que pendant sa chauffe sur le réseau, prévue (plage ON ou fenêtre
+                # déplacée par le Chef) ou en cours
+                w = self.router_windows.get(router)
+                heats = w is not None and w["outlook"] == OUTLOOK_HEAT
+                if heats and w["start"] <= when < w["end"]:
+                    total += power
+                elif (
+                    when < now + STEP
+                    and not (heats and w["shifted"])
+                    and self._router_on_slot(self.router_entities.get(router, {}))
+                ):
                     total += power
                 continue
             if when < now + STEP:
@@ -701,7 +727,6 @@ class Orchestrator:
                     solar_kwh=solar[i],
                     price=seg.price,
                     off_peak=seg.off_peak,
-                    loads_w=self._loads_w(t, now),
                 )
             )
         tomorrow = (now + timedelta(days=1)).date()
@@ -710,6 +735,10 @@ class Orchestrator:
             2,
         )
         self._battery_range_kwh = battery.range_kwh
+        # Chauffe des routeurs prévue cette nuit (plage ON), comptée dans le soutirage
+        self._router_plan_windows(now)
+        for st in steps:
+            st.loads_w = self._loads_w(st.start, now)
         settings = Settings(
             efficiency=self.efficiency_used,
             wear_eur_kwh=float(self.cfg[CONF_WEAR]),
@@ -729,6 +758,11 @@ class Orchestrator:
         if not steps:
             self.missing.append("tariff_forecast")
         plan = self._plan_with_soc_rules(steps, battery, settings, override)
+        if self._router_shift_windows(steps, plan, now):
+            # Chauffe déplacée : le plan des batteries est refait avec la nouvelle fenêtre
+            for st in steps:
+                st.loads_w = self._loads_w(st.start, now)
+            plan = self._plan_with_soc_rules(steps, battery, settings, override)
         if plan.state == PLAN_MISSING_DATA and not self.missing:
             self.missing.append("off_peak_price")
         if not self.auto_control:
@@ -1240,12 +1274,21 @@ class Orchestrator:
             load_w = self._router_power_w(dev, ents)
             reached = src.state_str(hass, ents.get("target_reached")) == "on"
             on_slot = self._router_on_slot(ents)
-            need = self.router_daily_kwh.get(dev) or float(self.cfg[CONF_ROUTER_DAILY_KWH])
-            spare = (surplus or 0.0) - (range_kwh if priority == "battery_first" else 0.0)
+            ballon_sun_ok = self._ballon_sun_ok(dev)
+            temperature = src.state_float(hass, ents.get("water_temperature"))
             piloted = (
                 self.auto_control and self.router_control.get(dev, True) and online and enabled and has_service
             )
             reason = "offline" if not online else ("display_only" if not enabled else "autonomous")
+            # Chauffe déplacée par le Chef (option « Le Chef peut déplacer la chauffe »)
+            w = self.router_windows.get(dev)
+            shifted = bool(w and w["shifted"] and now < max(w["end"], w["slot_end"]))
+            force_heat = False
+            if shifted and w["start"] <= now < w["end"]:
+                live = on_slot_outlook(temperature, w["t_below"], reached, ballon_sun_ok)
+                if live != OUTLOOK_HEAT:
+                    self._router_heat_done[dev] = w["start"]  # ballon chaud : fenêtre terminée
+                force_heat = live == OUTLOOK_HEAT and self._router_heat_done.get(dev) != w["start"]
             if piloted:
                 dec = self.router_logic.setdefault(dev, RouterLogic()).step(
                     RouterInputs(
@@ -1262,7 +1305,9 @@ class Orchestrator:
                         soc=soc,
                         summer_soc=float(self.cfg[CONF_SUMMER_SOC]),
                         batteries_sun_ok=surplus is not None and surplus >= range_kwh,
-                        ballon_sun_ok=surplus is not None and spare >= need,
+                        ballon_sun_ok=ballon_sun_ok,
+                        force_heat=force_heat,
+                        slot_shifted=shifted,
                     )
                 )
                 self.router_decisions[dev] = dec
@@ -1281,11 +1326,12 @@ class Orchestrator:
                     "control_enabled": enabled,
                     "piloted": piloted,
                     "switch_on": self.router_control.get(dev, True),
-                    "temperature": src.state_float(hass, ents.get("water_temperature")),
+                    "temperature": temperature,
                     "routed_power": routed,
                     "target_reached": reached,
                     "on_slot": on_slot,
                     "state": reason,
+                    "next_on": self._router_next_on(dev, ents, now, temperature, reached, ballon_sun_ok),
                 }
             )
         self.router_status = status
@@ -1300,10 +1346,131 @@ class Orchestrator:
         return self._router_load_w(device_id)
 
     def _router_on_slot(self, ents: dict[str, str]) -> bool:
-        """Plage ON du planning : `on_slot_active`, sinon l'état « on_slot » du capteur `status` (1.1.x)."""
+        """Plage ON du planning : `on_slot_active`, sinon le capteur `planning` (1.1.x), sinon `status`.
+
+        `status` passe à « blocked » dès que le Chef verrouille le routeur : il ne
+        montre jamais « on_slot » à un routeur verrouillé, qui restait alors bloqué
+        toute la plage ON. `planning` donne la plage du planning, verrouillé ou non.
+        """
         if ents.get("on_slot_active"):
             return src.state_str(self.hass, ents["on_slot_active"]) == "on"
+        if ents.get("planning"):
+            return src.state_str(self.hass, ents["planning"]) == "on"
         return src.state_str(self.hass, ents.get("status")) == "on_slot"
+
+    def _ballon_sun_ok(self, dev: str) -> bool:
+        """Le soleil de demain suffit-il à chauffer le ballon (après les batteries en « batteries d'abord ») ?"""
+        surplus = self.tomorrow_surplus_kwh
+        if surplus is None:
+            return False
+        need = self.router_daily_kwh.get(dev) or float(self.cfg[CONF_ROUTER_DAILY_KWH])
+        spare = surplus - ((self._battery_range_kwh or 0.0) if self.cfg[CONF_ROUTER_PRIORITY] == "battery_first" else 0.0)
+        return spare >= need
+
+    def _router_slot(self, ents: dict[str, str], now: datetime) -> tuple[datetime, datetime, float | None] | None:
+        state = self.hass.states.get(ents["planning"]) if ents.get("planning") else None
+        return next_on_slot(state.attributes.get("slots") if state else None, now)
+
+    def _router_plan_windows(self, now: datetime) -> None:
+        """Prochaine plage ON de chaque routeur et ce que le Chef en fera, avant le plan des batteries.
+
+        Une chauffe déplacée qui a commencé ne bouge plus jusqu'à la fin de la plage
+        qu'elle remplace : sinon le ballon pourrait chauffer deux fois.
+        """
+        out: dict[str, dict[str, Any]] = {}
+        for r in self.routers:
+            dev = r["device_id"]
+            ents = self.router_entities.get(dev, {})
+            old = self.router_windows.get(dev)
+            if old and old["shifted"] and old["start"] <= now < max(old["end"], old["slot_end"]):
+                out[dev] = old
+                continue
+            slot = self._router_slot(ents, now)
+            if slot is None:
+                continue
+            start, end, t_below = slot
+            piloted = self.auto_control and self.router_control.get(dev, True)
+            out[dev] = {
+                "start": start,
+                "end": end,
+                "slot_start": start,
+                "slot_end": end,
+                "t_below": t_below,
+                "shifted": False,
+                "why": None,
+                "previous": old["start"] if old and old["shifted"] else None,
+                "outlook": on_slot_outlook(
+                    src.state_float(self.hass, ents.get("water_temperature")),
+                    t_below,
+                    src.state_str(self.hass, ents.get("target_reached")) == "on",
+                    piloted and self._ballon_sun_ok(dev),
+                ),
+            }
+        self.router_windows = out
+
+    def _router_shift_windows(self, steps: list[Step], plan: Plan, now: datetime) -> bool:
+        """Option « Le Chef peut déplacer la chauffe » : place chaque chauffe prévue cette nuit.
+
+        La fenêtre garde la durée de la plage ON, reste dans les mêmes heures creuses
+        et évite d'abord un dépassement de la puissance souscrite, puis la charge des
+        batteries (charge programmée, charge complète, calibration). Renvoie True si
+        une fenêtre a changé : le plan des batteries doit alors être refait.
+        """
+        if not self.cfg.get(CONF_ROUTER_SHIFT) or not self.auto_control or not steps or not self.import_limit:
+            return False
+        step_h = STEP_MINUTES / 60
+        charge = {sp.start: sp.charge_kwh for sp in plan.steps}
+        changed = False
+        for r in self.routers:
+            dev = r["device_id"]
+            w = self.router_windows.get(dev)
+            if not w or w["outlook"] != OUTLOOK_HEAT or not self.router_control.get(dev, True):
+                continue
+            if min(w["start"], w["slot_start"]) <= now:
+                continue  # plage ou chauffe déjà commencée
+            power = self._router_power_w(dev, self.router_entities.get(dev, {}))
+            if not power:
+                continue
+            night = []
+            for st in steps:
+                charge_w = charge.get(st.start, 0.0) / step_h * 1000
+                busy = st.consumption_kwh / step_h * 1000 + self._loads_w(st.start, now, exclude=dev) + charge_w
+                night.append(NightStep(st.start, st.off_peak, busy, charge_w > 0))
+            start, end, why = choose_heat_window(
+                night, STEP, w["slot_start"], w["slot_end"], power, self.import_limit, w.get("previous")
+            )
+            shifted = why is not None
+            if shifted != w["shifted"] or start != w["start"]:
+                changed = True
+            w.update(start=start, end=end, shifted=shifted, why=why)
+        return changed
+
+    def _router_next_on(
+        self, dev: str, ents: dict[str, str], now: datetime, temperature: float | None, reached: bool, sun_ok: bool
+    ) -> dict[str, Any] | None:
+        """Prochaine chauffe en heures creuses et ce que le Chef en fera (commentaire de la carte Énergie)."""
+        w = self.router_windows.get(dev)
+        if w is None or now >= max(w["end"], w["slot_end"]):
+            slot = self._router_slot(ents, now)
+            if slot is None:
+                return None
+            start, end, t_below = slot
+            w = {"start": start, "end": end, "slot_start": start, "slot_end": end, "t_below": t_below, "shifted": False, "why": None}
+        outlook = on_slot_outlook(temperature, w["t_below"], reached, sun_ok)
+        shifted = w["shifted"] and outlook == OUTLOOK_HEAT
+        if shifted and self._router_heat_done.get(dev) == w["start"]:
+            outlook, shifted = OUTLOOK_HOT, False
+        start, end = (w["start"], w["end"]) if shifted else (w["slot_start"], w["slot_end"])
+        return {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "slot_start": w["slot_start"].isoformat(),
+            "slot_end": w["slot_end"].isoformat(),
+            "t_below": w["t_below"],
+            "outlook": outlook,
+            "shifted": shifted,
+            "why": w["why"] if shifted else None,
+        }
 
     def _router_load_w(self, device_id: str) -> float | None:
         for load in self.cfg.get(CONF_LOADS) or []:
@@ -1328,13 +1495,17 @@ class Orchestrator:
         de l'utilisateur pour de bon). La prise de main expire seule au bout de
         30 min, d'où le renouvellement toutes les 15 min. Au déverrouillage, la
         main est rendue aussitôt : le routeur reprend le mode de l'utilisateur.
+
+        Chauffe déplacée (v1.3.4) : même prise de main, mode « forced » envoyé
+        par le Chef ; le routeur garde sa température de sécurité.
         """
         sent = self._router_sent.get(dev)
-        if not dec.lock:
+        if not dec.lock and not dec.force:
             if sent:
                 await self._async_release_routers([dev], reset_logic=False)
             return
-        if sent and now - sent["at"] < timedelta(minutes=ROUTER_RENEW_MIN):
+        mode = "forced" if dec.force else "off"
+        if sent and sent.get("mode", "off") == mode and now - sent["at"] < timedelta(minutes=ROUTER_RENEW_MIN):
             return
         keys = list(ROUTER_CONTROLLED_KEYS)
         ok = await self._router_call(
@@ -1343,10 +1514,10 @@ class Orchestrator:
         )
         if ok:
             ok = await self._router_call(
-                "set_mode", {"device_id": dev, "mode": "off", "controller": CONTROLLER_NAME}
+                "set_mode", {"device_id": dev, "mode": mode, "controller": CONTROLLER_NAME}
             )
         if ok:
-            self._router_sent[dev] = {"keys": keys, "lock": True, "at": now}
+            self._router_sent[dev] = {"keys": keys, "lock": dec.lock, "mode": mode, "at": now}
 
     async def _async_release_routers(self, devices: list[str] | None = None, *, reset_logic: bool = True) -> None:
         for dev in list(devices if devices is not None else self._router_sent):

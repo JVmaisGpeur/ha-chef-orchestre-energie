@@ -245,10 +245,12 @@
           "routers": "Routers to drive",
           "router_priority": "Solar surplus priority",
           "summer_soc": "Summer exception: battery SOC from which the router is not shed",
-          "router_daily_kwh": "Daily need of the water tank (if history is missing)"
+          "router_daily_kwh": "Daily need of the water tank (if history is missing)",
+          "router_shift": "The conductor may move the off-peak heating"
         },
         "data_description": {
-          "summer_soc": "Above it, and if tomorrow's sun is enough to recharge the batteries, monitoring lets the router heat (90 % by default)."
+          "summer_soc": "Above it, and if tomorrow's sun is enough to recharge the batteries, monitoring lets the router heat (90 % by default).",
+          "router_shift": "Off by default. When the router's ON slot would exceed the subscribed power or fall during the battery charge (scheduled charge, full charge, calibration), the conductor blocks it and heats the tank itself at another time of the same off-peak hours, for the same duration, until the slot's temperature. Otherwise the ON slot of the router stays as is."
         }
       },
       "router_usage": {

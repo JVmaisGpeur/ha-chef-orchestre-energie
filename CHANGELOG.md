@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.4 – 26/11/2026
+
+- **Correction** : le chauffe-eau ne chauffait pas pendant la plage ON du routeur (rattrapage en heures creuses). Le Chef d'orchestre reconnaissait la plage ON à l'état « on_slot » du routeur ; or un routeur qu'il verrouille affiche « blocked », jamais « on_slot » : il restait donc verrouillé toute la plage. La plage se lit maintenant sur le capteur « Plage en cours » (`planning`) du routeur, verrouillé ou non.
+- **Carte Énergie, bloc Routeur solaire** : quand une plage ON (chauffe en heures creuses) arrive dans les 24 h, une note sous le routeur dit ce que le Chef d'orchestre a prévu : laisser chauffer (avec l'horaire et le seuil de température de la plage), bloquer la plage parce que le soleil du lendemain suffira, ou ne rien faire parce que le ballon est déjà chaud. Le Chef d'orchestre peut encore adapter la plage jusqu'à son début. Nouvel attribut `next_on` dans `routers` du plan de la nuit.
+- **Plan de la nuit** : la chauffe prévue du ballon (plage ON) compte maintenant dans la puissance disponible pour la charge des batteries, comme un gros consommateur. Avant, le routeur ne comptait que pendant la minute en cours.
+- **Nouvelle option « Le Chef d'orchestre peut déplacer la chauffe en heures creuses »** (Configurer → Routeurs solaires, désactivée par défaut) : si la plage ON dépasserait la puissance souscrite ou tombe pendant la charge des batteries (charge programmée, charge complète, calibration), le Chef d'orchestre bloque la plage du routeur et chauffe lui-même le ballon en marche forcée à un autre moment des mêmes heures creuses, pendant la même durée, jusqu'à la température de la plage. La note de la carte indique le nouvel horaire et la raison. Une chauffe commencée ne bouge plus.
+
 ## 1.3.3 – 25/11/2026
 
 - **Correction** : dans la carte Énergie, le bouton du routeur ouvrait une carte vide (« Choisissez le sélecteur de mode d'un routeur F1ATB ») : la carte du routeur reçoit maintenant son sélecteur de mode (`entity`), avec tuiles, commandes et planning.

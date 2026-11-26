@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "chef_orchestre_energie"
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 PLATFORMS = ["binary_sensor", "button", "number", "select", "sensor", "switch"]
 
 # Intégrations lues et versions minimales (contrats, interface 1)
@@ -58,7 +58,9 @@ ROUTER_KEYS = (
     "external_control",
     "connected",
     "control_enabled",
-    # ha-routeur-f1atb 1.1.x : état (« on_slot » pendant une plage ON) et puissance du ballon
+    # ha-routeur-f1atb 1.1.x : plage du planning (« on » pendant une plage ON, même
+    # verrouillé), état (« on_slot » seulement s'il n'est pas bloqué) et puissance du ballon
+    "planning",
     "status",
     "water_heater_power",
     # demandés au cahier des charges du routeur, pas encore livrés (lus s'ils apparaissent)
@@ -108,6 +110,8 @@ CONF_SUMMER_SOC = "summer_soc"  # % : exception été de la surveillance
 CONF_FULL_CHARGE_DAYS = "full_charge_days"  # seuil d'anticipation (N3)
 CONF_FULL_CHARGE_AUTO = "full_charge_auto"
 CONF_ROUTER_DAILY_KWH = "router_daily_kwh"  # besoin du ballon, si l'historique manque
+# v1.3.4 : le Chef peut déplacer la chauffe de la plage ON dans les heures creuses
+CONF_ROUTER_SHIFT = "router_shift"
 
 # Gros consommateurs
 LOAD_NAME = "name"
@@ -145,6 +149,7 @@ DEFAULTS = {
     CONF_FULL_CHARGE_DAYS: 20,
     CONF_FULL_CHARGE_AUTO: True,
     CONF_ROUTER_DAILY_KWH: 3.0,
+    CONF_ROUTER_SHIFT: False,
 }
 ROUTER_PRIORITIES = ["battery_first", "router_first"]
 FULL_CHARGE_OPTIONS = ["auto", "next_sun", "tonight", "now", "skip"]

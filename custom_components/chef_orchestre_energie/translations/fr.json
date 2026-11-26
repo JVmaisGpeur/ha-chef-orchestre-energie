@@ -245,10 +245,12 @@
           "routers": "Routeurs à piloter",
           "router_priority": "Priorité du surplus solaire",
           "summer_soc": "Exception été : SOC des batteries à partir duquel le routeur n'est pas délesté",
-          "router_daily_kwh": "Besoin quotidien du ballon (si l'historique manque)"
+          "router_daily_kwh": "Besoin quotidien du ballon (si l'historique manque)",
+          "router_shift": "Le Chef d'orchestre peut déplacer la chauffe en heures creuses"
         },
         "data_description": {
-          "summer_soc": "Au-dessus, et si le soleil de demain suffit à recharger les batteries, la surveillance laisse le routeur chauffer (90 % par défaut)."
+          "summer_soc": "Au-dessus, et si le soleil de demain suffit à recharger les batteries, la surveillance laisse le routeur chauffer (90 % par défaut).",
+          "router_shift": "Désactivé par défaut. Quand la plage ON du routeur dépasserait la puissance souscrite ou tomberait pendant la charge des batteries (charge programmée, charge complète, calibration), le Chef d'orchestre la bloque et chauffe le ballon lui-même à un autre moment des mêmes heures creuses, pendant la même durée, jusqu'à la température de la plage. Sinon la plage ON du routeur reste telle quelle."
         }
       },
       "router_usage": {

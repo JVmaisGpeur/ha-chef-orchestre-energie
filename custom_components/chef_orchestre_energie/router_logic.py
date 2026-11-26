@@ -27,6 +27,8 @@ R_SHED = "shed"  # délesté : les batteries chauffaient le ballon
 R_ON_BLOCKED = "on_blocked"  # plage ON bloquée (ballon chaud ou soleil demain)
 R_BOOST = "boost"  # plage ON : chauffe sur le réseau
 R_HOT = "hot"  # ballon chaud
+R_SHIFTED = "shifted"  # plage ON du routeur bloquée : la chauffe est déplacée
+R_SHIFT_HEAT = "shift_heat"  # chauffe déplacée en cours (marche forcée du Chef)
 
 
 @dataclass
@@ -45,6 +47,8 @@ class RouterInputs:
     summer_soc: float
     batteries_sun_ok: bool  # le soleil de demain suffit à recharger les batteries
     ballon_sun_ok: bool  # le soleil de demain suffit à chauffer le ballon
+    force_heat: bool = False  # fenêtre de chauffe déplacée en cours, ballon à chauffer
+    slot_shifted: bool = False  # la plage ON du routeur est remplacée par une fenêtre du Chef
 
 
 @dataclass
@@ -53,6 +57,7 @@ class RouterDecision:
     reason: str
     charge_ceiling_w: float | None = None  # plafond de charge des batteries (routeur d'abord)
     no_discharge: bool = False  # interdire la décharge (plage ON qui chauffe)
+    force: bool = False  # marche forcée à envoyer au routeur (chauffe déplacée)
 
 
 @dataclass
@@ -69,9 +74,16 @@ class RouterLogic:
         bat = i.battery_w or 0.0
         routed = i.routed_w or 0.0
 
+        # Chauffe déplacée par le Chef : marche forcée, les batteries ne la paient pas
+        if i.force_heat:
+            self.unlock_since = None
+            return RouterDecision(False, R_SHIFT_HEAT, no_discharge=True, force=True)
+
         # Plage ON (rattrapage du routeur en heures creuses)
         if i.on_slot:
             self.unlock_since = None
+            if i.slot_shifted:
+                return RouterDecision(True, R_SHIFTED)
             if i.target_reached or i.ballon_sun_ok:
                 return RouterDecision(True, R_ON_BLOCKED)
             return RouterDecision(False, R_BOOST, no_discharge=True)
@@ -118,6 +130,127 @@ class RouterLogic:
         if self.shed:
             return RouterDecision(True, R_SHED)
         return RouterDecision(False, R_HOT if i.target_reached else R_ROUTING)
+
+
+# Prévision de la prochaine plage ON (commentaire de la carte)
+OUTLOOK_HEAT = "heat"  # le Chef laissera le routeur chauffer
+OUTLOOK_SUN = "sun"  # le Chef bloquera la plage : le soleil de demain suffit
+OUTLOOK_HOT = "hot"  # pas de chauffe : ballon déjà chaud
+
+
+def next_on_slot(
+    slots: list | None, now: datetime, horizon: timedelta = timedelta(hours=24)
+) -> tuple[datetime, datetime, float | None] | None:
+    """Prochaine plage ON du planning du routeur, en cours ou à venir dans l'horizon.
+
+    `slots` : attribut `slots` du capteur `planning` de ha-routeur-f1atb (minutes
+    depuis minuit, `kind` off/on/route). Renvoie (début, fin, seuil de température)
+    ; le seuil `t_below` ne compte que si la plage suit une sonde (`temp_channel` ≥ 0).
+    """
+    best = None
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    for day in (0, 1):
+        base = midnight + timedelta(days=day)
+        for s in slots or []:
+            if not isinstance(s, dict) or s.get("kind") != "on":
+                continue
+            try:
+                a, b = int(s["start_min"]), int(s["end_min"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            start = base + timedelta(minutes=a)
+            end = base + timedelta(minutes=b if b > a else b + 1440)
+            if end <= now or start > now + horizon:
+                continue
+            if best is None or start < best[0]:
+                channel = s.get("temp_channel")
+                t_below = s.get("t_below") if isinstance(channel, int) and channel >= 0 else None
+                best = (start, end, float(t_below) if t_below is not None else None)
+    return best
+
+
+def on_slot_outlook(
+    temperature: float | None, t_below: float | None, target_reached: bool, ballon_sun_ok: bool
+) -> str:
+    """Ce que le Chef fera de la prochaine plage ON, avec les données d'aujourd'hui (même règle que `step`)."""
+    if target_reached or (t_below is not None and temperature is not None and temperature >= t_below):
+        return OUTLOOK_HOT
+    if ballon_sun_ok:
+        return OUTLOOK_SUN
+    return OUTLOOK_HEAT
+
+
+WHY_POWER = "power"  # la plage dépasserait la puissance souscrite
+WHY_BATTERY = "battery"  # la plage tombait pendant la charge des batteries
+
+
+@dataclass
+class NightStep:
+    """Un pas du plan de la nuit, vu par le placement de la chauffe."""
+
+    start: datetime
+    off_peak: bool
+    busy_w: float  # consommation de base + gros consommateurs + charge réseau des batteries
+    charging: bool  # charge réseau des batteries prévue sur ce pas
+
+
+def choose_heat_window(
+    night: list[NightStep],
+    step: timedelta,
+    slot_start: datetime,
+    slot_end: datetime,
+    router_w: float,
+    limit_w: float,
+    previous: datetime | None = None,
+) -> tuple[datetime, datetime, str | None]:
+    """Fenêtre de chauffe de même durée que la plage ON, dans les mêmes heures creuses.
+
+    Critères, dans l'ordre : ne pas dépasser la puissance souscrite, ne pas tomber
+    pendant la charge des batteries, garder la fenêtre déjà choisie (pas de va-et-vient),
+    rester au plus près de la plage du routeur. Renvoie (début, fin, raison du
+    déplacement) ; la plage du routeur est rendue telle quelle si elle convient.
+    """
+    length = slot_end - slot_start
+    keep = (slot_start, slot_end, None)
+    if length <= timedelta(0) or not night:
+        return keep
+    # Heures creuses qui contiennent le début de la plage
+    k0 = next((k for k, n in enumerate(night) if n.start <= slot_start < n.start + step), None)
+    if k0 is None or not night[k0].off_peak:
+        return keep
+    lo = k0
+    while lo > 0 and night[lo - 1].off_peak:
+        lo -= 1
+    hi = k0
+    while hi + 1 < len(night) and night[hi + 1].off_peak:
+        hi += 1
+    hc_end = night[hi].start + step
+
+    def score(start: datetime) -> tuple[float, int]:
+        end = start + length
+        over, overlap = 0.0, 0
+        for n in night[lo : hi + 1]:
+            if n.start < end and n.start + step > start:
+                over += max(0.0, n.busy_w + router_w - limit_w)
+                overlap += n.charging
+        return round(over), overlap
+
+    candidates = {slot_start} | {
+        night[k].start for k in range(lo, hi + 1) if night[k].start + length <= hc_end
+    }
+    if previous is not None and night[lo].start <= previous and previous + length <= hc_end:
+        candidates.add(previous)
+    best = min(
+        candidates,
+        key=lambda s: (*score(s), s != previous, abs((s - slot_start).total_seconds()), s),
+    )
+    if best == slot_start:
+        return keep
+    over, overlap = score(slot_start)
+    why = WHY_POWER if over > 0 else (WHY_BATTERY if overlap else None)
+    if why is None:
+        return keep
+    return best, best + length, why
 
 
 def combine(decisions: list[RouterDecision], *, grid_charging: bool = False) -> tuple[float | None, bool]:

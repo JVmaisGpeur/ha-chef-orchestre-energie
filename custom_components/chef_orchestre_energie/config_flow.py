@@ -23,6 +23,7 @@ from .const import (
     CONF_FULL_CHARGE_DAYS,
     CONF_ROUTER_DAILY_KWH,
     CONF_ROUTER_PRIORITY,
+    CONF_ROUTER_SHIFT,
     CONF_ROUTERS,
     CONF_SUMMER_SOC,
     LOAD_BATTERY,
@@ -336,6 +337,7 @@ def _routers_schema(hass, cur: dict, devices: list[tuple[str, str]], extended: b
     if extended:
         fields[vol.Required(CONF_SUMMER_SOC, default=cur.get(CONF_SUMMER_SOC, DEFAULTS[CONF_SUMMER_SOC]))] = _num(50, 100, 1, "%")
         fields[vol.Required(CONF_ROUTER_DAILY_KWH, default=cur.get(CONF_ROUTER_DAILY_KWH, DEFAULTS[CONF_ROUTER_DAILY_KWH]))] = _num(0.5, 20, 0.5, "kWh")
+        fields[vol.Required(CONF_ROUTER_SHIFT, default=cur.get(CONF_ROUTER_SHIFT, DEFAULTS[CONF_ROUTER_SHIFT]))] = selector.BooleanSelector()
     return vol.Schema(fields)
 
 
@@ -667,6 +669,7 @@ class ChefOptionsFlow(OptionsFlow):
                 CONF_ROUTER_PRIORITY: user_input[CONF_ROUTER_PRIORITY],
                 CONF_SUMMER_SOC: user_input[CONF_SUMMER_SOC],
                 CONF_ROUTER_DAILY_KWH: user_input[CONF_ROUTER_DAILY_KWH],
+                CONF_ROUTER_SHIFT: user_input[CONF_ROUTER_SHIFT],
                 "routers_seen": sorted(set(cur.get("routers_seen") or []) | {d for d, _ in devices}),
             }
             self._usage_index = 0

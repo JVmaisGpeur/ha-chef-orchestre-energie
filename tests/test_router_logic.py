@@ -86,3 +86,99 @@ def test_charge_reseau_leve_le_plafond_routeur_d_abord():
     assert rl.combine([d], grid_charging=True) == (None, False)
     boost = rl.RouterDecision(False, rl.R_BOOST, no_discharge=True)
     assert rl.combine([d, boost], grid_charging=True) == (None, True)
+
+
+# Planning réel d'un ECS_F1ATB : plage ON de 4:00 à 5:59, chauffe sous 50 °C
+SLOTS = [
+    {"start_min": 0, "end_min": 240, "kind": "off", "temp_channel": 0, "t_below": 45},
+    {"start_min": 240, "end_min": 359, "kind": "on", "temp_channel": 0, "t_below": 50},
+    {"start_min": 359, "end_min": 570, "kind": "off", "temp_channel": -1, "t_below": None},
+    {"start_min": 570, "end_min": 1110, "kind": "route", "temp_channel": 0, "t_below": 60},
+    {"start_min": 1110, "end_min": 1440, "kind": "off", "temp_channel": -1, "t_below": None},
+]
+
+
+def test_prochaine_plage_on_le_lendemain():
+    soir = datetime(2026, 11, 26, 20, tzinfo=timezone.utc)
+    start, end, t_below = rl.next_on_slot(SLOTS, soir)
+    assert start == datetime(2026, 11, 27, 4, tzinfo=timezone.utc)
+    assert end == datetime(2026, 11, 27, 5, 59, tzinfo=timezone.utc)
+    assert t_below == 50
+
+
+def test_plage_on_en_cours_puis_aucune_apres_la_fin():
+    nuit = datetime(2026, 11, 26, 5, tzinfo=timezone.utc)
+    assert rl.next_on_slot(SLOTS, nuit)[0] == datetime(2026, 11, 26, 4, tzinfo=timezone.utc)
+    matin = datetime(2026, 11, 26, 7, tzinfo=timezone.utc)
+    assert rl.next_on_slot(SLOTS, matin)[0] == datetime(2026, 11, 27, 4, tzinfo=timezone.utc)
+    assert rl.next_on_slot(SLOTS, matin, timedelta(hours=12)) is None
+    assert rl.next_on_slot([s for s in SLOTS if s["kind"] != "on"], matin) is None
+    assert rl.next_on_slot(None, matin) is None
+
+
+def test_plage_on_sans_sonde_sans_seuil():
+    slots = [{"start_min": 1380, "end_min": 120, "kind": "on", "temp_channel": -1, "t_below": 50}]
+    start, end, t_below = rl.next_on_slot(slots, datetime(2026, 11, 26, 20, tzinfo=timezone.utc))
+    assert (start.hour, end.day, end.hour, t_below) == (23, 27, 2, None)
+
+
+def test_prevision_de_la_plage_on():
+    assert rl.on_slot_outlook(41, 50, False, False) == rl.OUTLOOK_HEAT
+    assert rl.on_slot_outlook(41, 50, False, True) == rl.OUTLOOK_SUN
+    assert rl.on_slot_outlook(51, 50, False, False) == rl.OUTLOOK_HOT
+    assert rl.on_slot_outlook(41, 50, True, False) == rl.OUTLOOK_HOT
+    assert rl.on_slot_outlook(None, None, False, False) == rl.OUTLOOK_HEAT
+
+
+# ---- Chauffe déplacée par le Chef (option router_shift, v1.3.4)
+STEP = timedelta(minutes=15)
+NIGHT0 = datetime(2026, 11, 26, 22, tzinfo=timezone.utc)  # 22:00, HC de 23:00 à 6:00
+
+
+def night(charge_w=0.0, charge_from=None, charge_to=None, base_w=300.0):
+    out = []
+    for k in range(40):  # 22:00 → 8:00
+        t = NIGHT0 + k * STEP
+        off_peak = datetime(2026, 11, 26, 23, tzinfo=timezone.utc) <= t < datetime(2026, 11, 27, 6, tzinfo=timezone.utc)
+        charging = charge_from is not None and charge_from <= t < charge_to
+        out.append(rl.NightStep(t, off_peak, base_w + (charge_w if charging else 0.0), charging))
+    return out
+
+
+def at(h, m=0):
+    return datetime(2026, 11, 27 if h < 12 else 26, h, m, tzinfo=timezone.utc)
+
+
+def choose(n, previous=None, slot=(at(4), at(5, 59))):
+    return rl.choose_heat_window(n, STEP, slot[0], slot[1], 2000.0, 4500.0, previous)
+
+
+def test_plage_libre_gardee():
+    assert choose(night()) == (at(4), at(5, 59), None)
+
+
+def test_plage_deplacee_hors_charge_des_batteries():
+    # Charge à 2400 W de 4:00 à 6:00 : 300 + 2400 + 2000 > 4500 W
+    start, end, why = choose(night(2400, at(4), at(6)))
+    assert (start, end, why) == (at(2), at(3, 59), rl.WHY_POWER)
+    # Petite charge : pas de dépassement, mais la chauffe la ralentirait
+    assert choose(night(1000, at(4), at(6)))[2] == rl.WHY_BATTERY
+
+
+def test_pas_de_va_et_vient():
+    assert choose(night(2400, at(4), at(6)), previous=at(1))[0] == at(1)
+
+
+def test_reste_dans_les_heures_creuses():
+    start, end, _ = choose(night(2400, at(23), at(6)), slot=(at(4), at(5, 59)))
+    assert at(23) <= start and end <= at(6)
+    # Plage hors heures creuses : jamais déplacée
+    assert choose(night(2400, at(23), at(6)), slot=(at(7), at(7, 30)))[2] is None
+
+
+def test_chauffe_deplacee_forcee_puis_plage_bloquee():
+    lg = rl.RouterLogic()
+    d = lg.step(inp(0, force_heat=True, on_slot=True, slot_shifted=True))
+    assert d.force and not d.lock and d.no_discharge and d.reason == rl.R_SHIFT_HEAT
+    d = lg.step(inp(1, on_slot=True, slot_shifted=True))
+    assert d.lock and not d.force and d.reason == rl.R_SHIFTED

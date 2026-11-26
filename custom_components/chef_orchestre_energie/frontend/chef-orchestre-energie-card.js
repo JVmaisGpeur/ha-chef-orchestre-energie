@@ -13,7 +13,7 @@
  *   gauge_warn: 80         # % de la puissance souscrite : jauge orange
  *   gauge_crit: 95         # jauge rouge
  */
-const ENERGY_CARD_VERSION = "1.3.3";
+const ENERGY_CARD_VERSION = "1.3.4";
 const CHEF = "chef_orchestre_energie";
 const TARIFF = "tarifs_electricite";
 const ZENDURE = "zendure_local";
@@ -100,7 +100,7 @@ const ENERGY_I18N = {
     info: {
       sec_tariff: "Le prix de l'électricité en ce moment, lu dans l'intégration Tarifs électricité : période (heures pleines ou creuses), couleur Tempo du jour et de demain, et prochain changement de prix. Le Chef d'orchestre s'en sert pour savoir quand la recharge des batteries sur le réseau coûte le moins cher. Le bouton ouvre la carte Tarifs électricité.",
       sec_bat: "L'état de vos batteries Zendure : niveau de charge, puissance de charge ou de décharge, mode en cours et SOC min / max appliqués, batterie par batterie. Avec l'interrupteur, le Chef d'orchestre pilote leur mode, la recharge de nuit et la réserve ; coupé, Zendure reprend la main avec vos propres réglages. La ligne « Charge complète » indique depuis quand chaque batterie n'a pas été chargée à 100 %. Le bouton ouvre la carte Zendure.",
-      sec_router: "Le routeur solaire F1ATB envoie le surplus des panneaux dans le ballon d'eau chaude (ou un autre appareil). Le Chef d'orchestre arbitre entre le ballon et les batteries : en « Batteries d'abord », il bloque le routeur tant que les batteries peuvent prendre le surplus ; il l'arrête aussi si les batteries se mettent à chauffer le ballon. La ligne montre la température, la puissance routée et ce que fait le Chef d'orchestre. L'interrupteur laisse le routeur en autonome ; le bouton ouvre sa carte.",
+      sec_router: "Le routeur solaire F1ATB envoie le surplus des panneaux dans le ballon d'eau chaude (ou un autre appareil). Le Chef d'orchestre arbitre entre le ballon et les batteries : en « Batteries d'abord », il bloque le routeur tant que les batteries peuvent prendre le surplus ; il l'arrête aussi si les batteries se mettent à chauffer le ballon. La ligne montre la température, la puissance routée et ce que fait le Chef d'orchestre. Quand une plage ON (chauffe en heures creuses) arrive dans les 24 h, une note dit si le Chef d'orchestre la laissera chauffer ou la bloquera (soleil du lendemain suffisant, ballon déjà chaud). Avec l'option « Le Chef d'orchestre peut déplacer la chauffe » (Configurer → Routeurs solaires), il déplace la chauffe dans les mêmes heures creuses si la plage tombe pendant la charge des batteries ou dépasserait la puissance souscrite. L'interrupteur laisse le routeur en autonome ; le bouton ouvre sa carte.",
       sec_plan: "Ce que le Chef d'orchestre a décidé pour la prochaine nuit : recharger ou non les batteries sur le réseau en heures creuses, combien et à quelle heure, d'après les prix, la prévision solaire et votre consommation habituelle. Il ne charge que si c'est rentable et s'il manque de l'énergie pour couvrir les heures pleines de demain. Le bouton ouvre le détail heure par heure.",
       sec_power: "La puissance que la maison appelle en ce moment au tableau électrique, comparée à votre puissance souscrite, avec la marge restante avant que le disjoncteur ne saute. Les gros consommateurs déclarés sont listés avec leur état ; « Réseau » marque ceux que les batteries n'alimentent pas. Pendant la recharge de nuit, le Chef d'orchestre limite la puissance de charge pour ne jamais faire disjoncter.",
       gain: "Économie nette sur chaque kWh acheté en heures creuses, stocké dans la batterie puis rendu à l'heure pleine la plus chère de demain, comparée à l'achat de ce kWh en heures pleines. Le prix payé la nuit et les pertes de la batterie sont déjà déduits. La batterie ne charge la nuit que si ce gain atteint le seuil de rentabilité, et seulement s'il manque de l'énergie pour couvrir les heures pleines.",
@@ -136,11 +136,22 @@ const ENERGY_I18N = {
         on_blocked: "Plage ON bloquée",
         boost: "Chauffe en heures creuses",
         hot: "Ballon chaud",
+        shifted: "Plage ON déplacée",
+        shift_heat: "Chauffe déplacée en cours",
         offline: "Hors ligne",
         display_only: "Affichage seulement",
         autonomous: "En autonome",
       },
       usage: { water_heater: "Chauffe-eau", pool: "Piscine", heating: "Chauffage", other: "Autre" },
+      nextOn: {
+        heat: (a, b, t) =>
+          `Chauffe prévue en heures creuses de ${a} à ${b}${t ? ` si le ballon est sous ${t} °C` : ""}. Le Chef d'orchestre a prévu de laisser chauffer ; il adaptera la plage si le soleil du lendemain suffit ou si le ballon est chaud.`,
+        sun: (a, b) => `Plage ON de ${a} à ${b} : le Chef d'orchestre la bloquera, le soleil du lendemain devrait suffire à chauffer le ballon.`,
+        hot: (a, b) => `Plage ON de ${a} à ${b} : pas de chauffe prévue, le ballon est déjà chaud.`,
+        shifted: (a, b, c, d, t, why) =>
+          `Chauffe déplacée par le Chef d'orchestre de ${a} à ${b} (au lieu de ${c}–${d}) ${why}${t ? `, jusqu'à ${t} °C` : ""}. Il peut encore l'adapter jusqu'à son début.`,
+        why: { power: "pour ne pas dépasser la puissance souscrite", battery: "pour laisser les batteries charger" },
+      },
     },
     settings: "Réglages du Chef d'orchestre",
     close: "Fermer",
@@ -226,7 +237,7 @@ const ENERGY_I18N = {
     info: {
       sec_tariff: "The current electricity price, read from the Tarifs électricité integration: period (peak or off-peak), today's and tomorrow's Tempo colour, and the next price change. The conductor uses it to know when charging the batteries from the grid costs least. The button opens the Tarifs électricité card.",
       sec_bat: "The state of your Zendure batteries: charge level, charge or discharge power, current mode and applied min / max SOC, battery by battery. With the switch on, the conductor drives their mode, night charging and reserve; turned off, Zendure takes over again with your own settings. The \"Full charge\" line shows how long since each battery last reached 100 %. The button opens the Zendure card.",
-      sec_router: "The F1ATB solar router sends the panels' surplus into the water heater (or another appliance). The conductor arbitrates between the tank and the batteries: in \"Batteries first\" it blocks the router while the batteries can take the surplus; it also stops it if the batteries start heating the tank. The line shows the temperature, the routed power and what the conductor is doing. The switch leaves the router autonomous; the button opens its card.",
+      sec_router: "The F1ATB solar router sends the panels' surplus into the water heater (or another appliance). The conductor arbitrates between the tank and the batteries: in \"Batteries first\" it blocks the router while the batteries can take the surplus; it also stops it if the batteries start heating the tank. The line shows the temperature, the routed power and what the conductor is doing. When an ON slot (off-peak heating) comes up within 24 h, a note says whether the conductor will let it heat or block it (enough sun tomorrow, tank already hot). With the option \"The conductor may move the off-peak heating\" (Configure → Solar routers), it moves the heating within the same off-peak hours when the slot falls during the battery charge or would exceed the subscribed power. The switch leaves the router autonomous; the button opens its card.",
       sec_plan: "What the conductor decided for the coming night: whether to charge the batteries from the grid during off-peak hours, how much and when, based on prices, the solar forecast and your usual consumption. It only charges when profitable and when energy is missing to cover tomorrow's peak hours. The button opens the hour-by-hour detail.",
       sec_power: "The power the home is drawing right now at the electrical panel, compared with your subscribed power, with the remaining margin before the breaker trips. Declared large loads are listed with their state; \"Grid\" marks those the batteries do not power. During night charging, the conductor limits the charging power so the breaker never trips.",
       gain: "Net saving on each kWh bought off-peak, stored in the battery and given back at tomorrow's most expensive peak hour, compared with buying that kWh at peak price. The night price and battery losses are already deducted. The battery only charges at night if this gain reaches the profitability threshold, and only if energy is missing to cover the peak hours.",
@@ -262,11 +273,22 @@ const ENERGY_I18N = {
         on_blocked: "ON slot blocked",
         boost: "Heating off-peak",
         hot: "Tank hot",
+        shifted: "ON slot moved",
+        shift_heat: "Moved heating running",
         offline: "Offline",
         display_only: "Display only",
         autonomous: "Autonomous",
       },
       usage: { water_heater: "Water heater", pool: "Pool", heating: "Heating", other: "Other" },
+      nextOn: {
+        heat: (a, b, t) =>
+          `Off-peak heating planned from ${a} to ${b}${t ? ` if the tank is below ${t} °C` : ""}. The conductor plans to let it heat and will adapt the slot if tomorrow's sun is enough or the tank is hot.`,
+        sun: (a, b) => `ON slot from ${a} to ${b} — the conductor will block it, tomorrow's sun should be enough to heat the tank.`,
+        hot: (a, b) => `ON slot from ${a} to ${b} — no heating planned, the tank is already hot.`,
+        shifted: (a, b, c, d, t, why) =>
+          `Heating moved by the conductor to ${a}–${b} (instead of ${c}–${d}) ${why}${t ? `, up to ${t} °C` : ""}. It may still adapt it until it starts.`,
+        why: { power: "to stay within the subscribed power", battery: "to let the batteries charge" },
+      },
     },
     settings: "Conductor settings",
     close: "Close",
@@ -596,7 +618,7 @@ class ChefOrchestreEnergieCard extends HTMLElement {
       const sw = this._state(swId);
       const switchOn = sw ? sw.state === "on" : x.switch_on;
       const display = x.state === "display_only";
-      const tone = { routing: "good", hot: "good", locked: "blue", boost: "warn", shed: "warn", on_blocked: "blue" }[x.state] || "muted";
+      const tone = { routing: "good", hot: "good", locked: "blue", boost: "warn", shed: "warn", on_blocked: "blue", shifted: "blue", shift_heat: "warn" }[x.state] || "muted";
       const state = r.states[x.state] || x.state;
       const disabled = !on || !x.online || display || !swId;
       return `<div class="rline ${x.online ? "" : "offline"}">
@@ -607,10 +629,30 @@ class ChefOrchestreEnergieCard extends HTMLElement {
           <span class="chip small ${tone}">${eEsc(state)}</span>
         </div>
         ${display ? `<div class="note">${eEsc(r.displayNote)}</div>` : ""}
+        ${this._routerNextOn(x)}
         <button class="act" data-act="routercard" data-key="${eEsc(x.device_id)}" data-name="${eEsc(x.name || "")}"><ha-icon icon="mdi:open-in-new"></ha-icon><span>${eEsc(r.open)}</span><ha-icon class="chev" icon="mdi:chevron-right"></ha-icon></button>
       </div>`;
     });
     return this._section("mdi:water-boiler", r.title, `<div class="routers">${lines.join("")}</div>`);
+  }
+
+  /* Prochaine plage ON d'ici 24 h et ce que le Chef d'orchestre en fera (v1.3.4) */
+  _routerNextOn(x) {
+    const n = x.next_on;
+    const txt = this._t.router.nextOn;
+    const kind = n && n.shifted ? "shifted" : n && n.outlook;
+    const say = kind && kind !== "why" && txt[kind];
+    if (!say || !x.piloted || !x.online) return "";
+    const a = this._time(n.start);
+    const b = this._time(n.end);
+    const t = n.t_below != null ? this._n(n.t_below, 0) : "";
+    const text =
+      kind === "shifted"
+        ? say(a, b, this._time(n.slot_start), this._time(n.slot_end), t, txt.why[n.why] || "")
+        : say(a, b, t);
+    const icon = { heat: "mdi:water-boiler-alert", sun: "mdi:weather-sunny", hot: "mdi:thermometer-check", shifted: "mdi:calendar-arrow-right" }[kind];
+    const tone = kind === "shifted" ? "heat" : kind;
+    return `<div class="note ronext ${eEsc(tone)}"><ha-icon icon="${icon}"></ha-icon><span>${eEsc(text)}</span></div>`;
   }
 
   /* ---- Plan pour demain (Chef d'orchestre) */
@@ -921,6 +963,9 @@ b.warn{color:var(--warning-color,#ffa000)}
 .chip.warn{background:color-mix(in srgb,var(--warning-color,#ffa000) 18%,transparent);color:var(--warning-color,#ffa000)}
 .chip.muted{background:color-mix(in srgb,var(--secondary-text-color) 16%,transparent);color:var(--secondary-text-color)}
 .routers{display:flex;flex-direction:column;gap:8px}
+.ronext{align-items:flex-start;margin:6px 0 2px}
+.ronext ha-icon{flex:none;margin-top:1px}
+.ronext.heat{color:var(--primary-color)}
 .rline{padding:8px 10px;border-radius:10px;background:color-mix(in srgb,var(--secondary-text-color) 8%,transparent)}
 .rline.offline{opacity:.6}
 .rhead{display:flex;align-items:center;gap:8px}
