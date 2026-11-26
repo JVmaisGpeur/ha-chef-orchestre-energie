@@ -293,6 +293,30 @@ def device_name(hass: HomeAssistant, device_id: str) -> str:
     return (dev.name_by_user or dev.name) if dev else device_id
 
 
+async def async_number_history(hass: HomeAssistant, entity_id: str, start: datetime, end: datetime) -> list[float]:
+    """Valeurs successives d'une entité numérique (ordre chronologique), vide si l'historique manque."""
+    try:
+        from homeassistant.components.recorder import get_instance, history
+    except ImportError:  # recorder absent
+        return []
+
+    def _query():
+        return history.state_changes_during_period(hass, start, end, entity_id, no_attributes=True)
+
+    try:
+        states = await get_instance(hass).async_add_executor_job(_query)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Historique de %s illisible : %s", entity_id, err)
+        return []
+    out: list[float] = []
+    for st in states.get(entity_id, []):
+        try:
+            out.append(float(st.state))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 async def async_last_full_charge(
     hass: HomeAssistant, entity_id: str, start: datetime, end: datetime, full_soc: float
 ) -> datetime | None:

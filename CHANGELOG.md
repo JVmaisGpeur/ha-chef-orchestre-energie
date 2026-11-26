@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.6 – 26/11/2026
+
+- **Correction (R2)** : le SOC min mémorisé comme réglage de l'utilisateur pouvait garder la valeur de la réserve. Au rechargement de l'intégration, la valeur de l'utilisateur était renvoyée puis la mémoire de la réserve posée effacée ; au redémarrage, si Zendure affichait encore 50 %, ce 50 % devenait « le réglage de l'utilisateur » et la batterie s'arrêtait à 50 % en heures pleines. Le même défaut pouvait survenir à la levée de la réserve à la fin des heures creuses.
+- **Restitution en deux temps** : la valeur rendue reste « en attente » (enregistrée) jusqu'à ce que la batterie l'affiche. Tant qu'elle affiche encore la valeur posée, celle-ci n'est jamais prise pour le réglage de l'utilisateur et la valeur rendue est renvoyée au plus toutes les 30 minutes, même pilotage coupé. Une valeur différente des deux reste un changement de l'utilisateur.
+- **Garde-fou** : une valeur lue égale à la réserve n'est pas mémorisée si une réserve a été posée sur cette batterie depuis le dernier réglage connu ; le réglage mémorisé est gardé et rendu, et un message est écrit dans le journal.
+- **Migration** : au premier démarrage en 1.3.6, un SOC min mémorisé égal à la réserve, sans rien de posé, sur une batterie où le Chef d'orchestre a déjà écrit, reprend la valeur d'avant la réserve trouvée dans l'historique (à défaut, le réglage d'une autre batterie). Elle est écrite sur la batterie et notée dans le journal.
+- **Réparation « SOC min de l'utilisateur égal à la réserve »** : signale le cas s'il se produit encore, avec un formulaire pour rendre 5 % ou la valeur de son choix.
+
 ## 1.3.5 – 26/11/2026
 
 - **Correction (R1)** : la réserve de SOC d'une nuit non rentable ne s'applique plus que pendant ses heures creuses. Elle était posée dès le calcul du plan (à midi par exemple) : un jour rouge Tempo, les batteries s'arrêtaient à 50 % avant 22:00 et la maison achetait au tarif rouge. Maintenant, en heures pleines, les batteries descendent toujours jusqu'au SOC min de l'utilisateur ; la réserve est posée au début des heures creuses et levée à leur fin.

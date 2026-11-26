@@ -455,7 +455,23 @@
     }
   },
   "issues": {
-    "integration_version": {
+    "user_min_reserve": {
+      "title": "User min SOC equal to the reserve ({entities})",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Your own min SOC",
+            "description": "The min SOC remembered as your own setting is the reserve value ({reserve} %), most likely a reserve that stayed on the battery. The conductor keeps your last known setting and gives it back. Choose your own min SOC: 5 % is the usual Zendure setting. Choose {reserve} % only if that really is your setting.",
+            "data": {
+              "min_soc": "Your min SOC"
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "The integration is not loaded."
+        }
+      }
+    },    "integration_version": {
       "title": "{name} too old or missing",
       "description": "The Energy conductor needs {name} {minimum} or newer (found: {found}). Control is suspended until it is updated."
     },

@@ -8,7 +8,7 @@
  *   show_modes: true       # frise des modes prévus
  *   show_settings: true    # réglages rapides
  */
-const CARD_VERSION = "1.3.5";
+const CARD_VERSION = "1.3.6";
 const DOMAIN = "chef_orchestre_energie";
 
 const I18N = {

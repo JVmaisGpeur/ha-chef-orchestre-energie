@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 from collections import defaultdict
 from dataclasses import replace
 from collections.abc import Callable
@@ -146,7 +148,7 @@ from .planner import (
     import_limit_w,
     wants_full_charge,
 )
-from .soc_keeper import SocKeeper, Target
+from .soc_keeper import VERSION as KEEPER_VERSION, SocKeeper, Target
 from .timeline import (
     at,
     fill_unknown_prices,
@@ -248,12 +250,15 @@ class Orchestrator:
         self._router_threshold_check: datetime | None = None
         self.tomorrow_surplus_kwh: float | None = None
         self._battery_range_kwh: float | None = None
+        self._suspect_shown: list[str] | None = None  # R2 : réparation « SOC min égal à la réserve » affichée
+        self._soc_checked: datetime | None = None  # dernier passage de _async_apply_soc
 
     # ------------------------------------------------------------ cycle de vie
     async def async_start(self) -> None:
         data = await self._store.async_load() or {}
         self._restore(data)
         await self.async_check_sources()
+        await self._async_migrate_keeper()
         await self.async_learn()
         await self.async_update_plan()
         hass = self.hass
@@ -324,6 +329,7 @@ class Orchestrator:
         if seen.get(CONF_RESERVE_SOC) == self.cfg[CONF_RESERVE_SOC] and "reserve_soc" in data:
             self.reserve_soc = float(data["reserve_soc"])
         self.keeper = SocKeeper(data.get("keeper"))
+        self.keeper.reserve_setting = self.reserve_soc
         self.measured_efficiency = data.get("measured_efficiency")
         self.solar_factor = float(data.get("solar_factor", 1.0))
         self.solar_history = dict(data.get("solar_history", {}))
@@ -420,6 +426,104 @@ class Orchestrator:
 
     async def async_set_reserve_soc(self, value: float) -> None:
         self.reserve_soc = max(0.0, min(50.0, float(value)))
+        self.keeper.reserve_setting = self.reserve_soc
+        self._save()
+        await self.async_update_plan()
+
+    # ------------------------------------------------------------ R2 (v1.3.6) : réglage de l'utilisateur
+    def _min_soc_entities(self) -> list[str]:
+        return [v["min_soc"] for v in self.unit_soc.values() if v.get("min_soc")]
+
+    async def _async_migrate_keeper(self) -> None:
+        """Migration v1.3.6 : SOC min mémorisé égal à la réserve alors que rien n'est posé."""
+        keeper = self.keeper
+        keeper.reserve_setting = self.reserve_soc
+        if keeper.version >= KEEPER_VERSION or not self.e2_ok:
+            return
+        now = dt_util.now()
+        entities = self._min_soc_entities()
+        histories = {}
+        for eid in entities:
+            memo = keeper.memo.get(eid)
+            if memo is not None and abs(memo - self.reserve_soc) <= 0.5 and eid in keeper.last_write:
+                histories[eid] = await src.async_number_history(self.hass, eid, now - timedelta(days=10), now)
+        fixes = keeper.migrate(entities, histories, self.reserve_soc)
+        reserve = self.reserve_now(now)
+        for eid, value in fixes:
+            if value is None:
+                _LOGGER.warning(
+                    "SOC min de %s : la valeur mémorisée (%s %%) est celle de la réserve et l'historique ne "
+                    "donne pas la valeur d'avant ; choisissez-la dans Réparations",
+                    eid, f"{self.reserve_soc:g}",
+                )
+                continue
+            _LOGGER.warning(
+                "SOC min de %s : la mémoire de la v1.3.5 gardait la réserve (%s %%) ; "
+                "le réglage de l'utilisateur retrouvé (%s %%) est rendu à la batterie",
+                eid, f"{self.reserve_soc:g}", f"{value:g}",
+            )
+            if reserve is None:
+                await self._set_soc_entity(eid, value)
+                keeper.last_write[eid] = now.isoformat()
+        self._keeper_report()
+        self._save()
+
+    async def _set_soc_entity(self, entity_id: str, value: float) -> bool:
+        try:
+            await self.hass.services.async_call(
+                "number", "set_value", {"entity_id": entity_id, "value": value}, blocking=True
+            )
+            return True
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("SOC de %s non écrit : %s", entity_id, err)
+            return False
+
+    def _keeper_report(self) -> None:
+        """Journal des valeurs refusées par le garde-fou, et réparation tant qu'il y en a."""
+        for kind, eid, value, memo in self.keeper.events:
+            if kind == "suspect":
+                _LOGGER.warning(
+                    "SOC min de %s : %s %% lu, égal à la réserve posée par le Chef d'orchestre ; "
+                    "le réglage mémorisé (%s %%) est gardé et rendu",
+                    eid, f"{value:g}", f"{memo:g}" if memo is not None else "?",
+                )
+        self.keeper.events.clear()
+        suspect = sorted(self.keeper.suspect)
+        if suspect != self._suspect_shown:
+            self._suspect_shown = suspect
+            full_id = f"{self.entry.entry_id}_user_min_reserve"
+            if suspect:
+                ir.async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    full_id,
+                    is_fixable=True,
+                    severity=ir.IssueSeverity.WARNING,
+                    translation_key="user_min_reserve",
+                    translation_placeholders={
+                        "entities": ", ".join(self._entity_name(e) for e in suspect),
+                        "reserve": f"{self.reserve_soc:g}",
+                    },
+                    data={"entry_id": self.entry.entry_id},
+                )
+            else:
+                ir.async_delete_issue(self.hass, DOMAIN, full_id)
+
+    def _entity_name(self, entity_id: str) -> str:
+        st = self.hass.states.get(entity_id)
+        return (st.attributes.get("friendly_name") if st else None) or entity_id
+
+    async def async_set_user_min_soc(self, value: float) -> None:
+        """Réparation « SOC min de l'utilisateur égal à la réserve » : la valeur choisie devient le réglage."""
+        value = max(0.0, min(50.0, float(value)))
+        reserve = self.reserve_now()
+        now = dt_util.now()
+        for eid in list(self.keeper.suspect):
+            if self.keeper.set_user(eid, value, src.state_float(self.hass, eid)) and reserve is None:
+                if await self._set_soc_entity(eid, value):
+                    self.keeper.last_write[eid] = now.isoformat()
+        _LOGGER.info("SOC min de l'utilisateur choisi dans Réparations : %s %%", f"{value:g}")
+        self._keeper_report()
         self._save()
         await self.async_update_plan()
 
@@ -1021,7 +1125,26 @@ class Orchestrator:
         if self.auto_control:
             await self._async_control_routers(now)
         await self._async_control_battery(now)
+        if self._soc_checked != now:
+            await self._async_finish_restore(now)
+        self._keeper_report()
         await self._async_notify_full_charge()
+
+    async def _async_finish_restore(self, now: datetime) -> None:
+        """R2 : pilotage coupé ou plan absent, une restitution peut rester en attente.
+
+        La batterie qui affiche encore la valeur posée reçoit de nouveau la valeur de
+        l'utilisateur, au plus une fois toutes les 30 minutes.
+        """
+        if not self.e2_ok or not (self.keeper.pending or self.keeper.applied):
+            return
+        before = copy.deepcopy(self.keeper.dump())
+        writes = self.keeper.pending_writes(self._soc_targets(), now)
+        for entity_id, value in writes:
+            await self._set_soc_entity(entity_id, value)
+        if self.keeper.dump() != before:
+            self._save()
+            self._notify_listeners()
 
     async def _async_control_battery(self, now: datetime) -> None:
         plan = self.plan
@@ -1077,24 +1200,24 @@ class Orchestrator:
         """Réserve de SOC min et SOC max à 100 % (E2), batterie par batterie."""
         if not self.e2_ok:
             return
+        self._soc_checked = now
+        before = copy.deepcopy(self.keeper.dump())
         writes = self.keeper.writes(self._soc_targets(), now, reserve_at(plan, now), self.full_charge)
         for entity_id, value in writes:
-            await self.hass.services.async_call(
-                "number", "set_value", {"entity_id": entity_id, "value": value}, blocking=True
-            )
-        if writes:
-            self._save()
+            await self._set_soc_entity(entity_id, value)
+        if self.keeper.dump() != before:
+            self._save()  # y compris une restitution confirmée (R2)
             self._notify_listeners()
 
     async def _async_release(self) -> None:
-        """Rend leurs réglages aux batteries et retire la déclaration de pilote."""
-        for entity_id, value in self.keeper.restore_all():
-            try:
-                await self.hass.services.async_call(
-                    "number", "set_value", {"entity_id": entity_id, "value": value}, blocking=True
-                )
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning("SOC de %s non restitué : %s", entity_id, err)
+        """Rend leurs réglages aux batteries et retire la déclaration de pilote.
+
+        R2 (v1.3.6) : la restitution reste « en attente » jusqu'à ce que la batterie
+        affiche la valeur rendue ; au redémarrage, la valeur posée encore affichée
+        n'est donc jamais prise pour le réglage de l'utilisateur.
+        """
+        for entity_id, value in self.keeper.restore_all(dt_util.now()):
+            await self._set_soc_entity(entity_id, value)
         if self.ceilings_ok:
             for key in CEILING_KEYS:
                 eid = self.ceiling_entities.get(key)

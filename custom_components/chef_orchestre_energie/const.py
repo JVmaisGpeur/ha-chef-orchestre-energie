@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "chef_orchestre_energie"
-VERSION = "1.3.5"
+VERSION = "1.3.6"
 PLATFORMS = ["binary_sensor", "button", "number", "select", "sensor", "switch"]
 
 # Intégrations lues et versions minimales (contrats, interface 1)

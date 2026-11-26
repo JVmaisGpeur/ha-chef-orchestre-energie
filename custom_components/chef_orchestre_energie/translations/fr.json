@@ -455,7 +455,23 @@
     }
   },
   "issues": {
-    "integration_version": {
+    "user_min_reserve": {
+      "title": "SOC min de l'utilisateur égal à la réserve ({entities})",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Votre propre SOC min",
+            "description": "Le SOC min retenu comme votre réglage vaut la réserve ({reserve} %) : c'est sans doute une réserve restée sur la batterie. Le Chef d'orchestre garde votre dernier réglage connu et le rend. Choisissez votre propre SOC min : 5 % est le réglage habituel de Zendure. Ne choisissez {reserve} % que si c'est vraiment votre réglage.",
+            "data": {
+              "min_soc": "Votre SOC min"
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "L'intégration n'est pas chargée."
+        }
+      }
+    },    "integration_version": {
       "title": "{name} absente ou trop ancienne",
       "description": "Le Chef d'orchestre énergie a besoin de {name} {minimum} ou plus récente (trouvée : {found}). Le pilotage est suspendu jusqu'à sa mise à jour."
     },
