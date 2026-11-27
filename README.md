@@ -12,6 +12,20 @@ Chaque soir, elle répond à trois questions :
 2. Le gain justifie-t-il les pertes de la batterie ? Sinon, la batterie reste à l'arrêt la nuit, sans cycle inutile.
 3. À quelle puissance charger sans faire disjoncter, compte tenu du chauffe-eau, de la PAC ou du VE ?
 
+## L'écosystème
+
+![Écosystème énergie : les compteurs, Tarifs, Zendure et le routeur fournissent leurs données ; le Chef d'orchestre et la Rentabilité solaire les lisent](images/ecosysteme.svg)
+
+Le Chef d'orchestre mène un petit écosystème d'intégrations qui fonctionnent chacune seule :
+
+- **Compteurs de Home Assistant**, de n'importe quelle marque : production solaire, soutirage, injection.
+- **[Tarifs Électricité](https://github.com/JVmaisGpeur/ha-tarifs-electricite)** : prix du moment et prévisions, heures creuses, Tempo, puissance souscrite.
+- **[Zendure SolarFlow Local](https://github.com/JVmaisGpeur/ha-zendure-solarflow-local)** : les batteries, leurs mesures et leur prise de main par un pilote.
+- **[Routeur F1ATB](https://github.com/JVmaisGpeur/ha-routeur-f1atb)** : le routeur solaire du ballon d'eau chaude, lui aussi pilotable.
+- **Rentabilité solaire** (à venir) : économies, amortissement et prix du kWh de l'installation ; elle fournira au Chef d'orchestre le coût d'usure des batteries.
+
+Le Chef d'orchestre lit ces données par les contrats d'interface publiés dans chaque README, et il est le seul à commander les batteries et le routeur. Une intégration absente ne bloque rien : la fonction qui en dépend est simplement désactivée, et la carte le dit.
+
 ## Prérequis
 
 | Intégration | Version | Rôle |
@@ -22,7 +36,7 @@ Chaque soir, elle répond à trois questions :
 | Le tableau Énergie de Home Assistant (recommandé) | – | La consommation de la maison y est apprise sans rien saisir |
 | Un capteur de puissance au tableau (facultatif) | – | Par exemple Shelly Pro 3EM, pour la jauge de la carte Énergie et le déverrouillage du routeur |
 | [ha-zendure-solarflow-local](https://github.com/JVmaisGpeur/ha-zendure-solarflow-local) ≥ 1.6.0 (facultatif) | – | Plafonds de charge/décharge, puissance à ne pas couvrir, calibration : consommateurs exclus et routeur |
-| [ha-routeur-f1atb](https://github.com/JVmaisGpeur/ha-routeur-f1atb) ≥ 1.0.0 (facultatif) | – | Routeur solaire F1ATB à piloter |
+| [ha-routeur-f1atb](https://github.com/JVmaisGpeur/ha-routeur-f1atb) ≥ 1.1.0 (facultatif) | – | Routeur solaire F1ATB à piloter |
 
 Avec Forecast.Solar, ajoutez une entrée par orientation de panneaux : le Chef d'orchestre les additionne heure par heure, comme le tableau Énergie.
 

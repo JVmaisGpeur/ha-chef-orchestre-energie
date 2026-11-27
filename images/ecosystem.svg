@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 384" width="760" height="384" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11.5">
+  <title>Each one supplies its data; only the conductor gives orders</title>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6b7280"/></marker></defs>
+  <rect x="0" y="0" width="760" height="384" rx="12" fill="#ffffff"/>
+  <text x="24" y="32" font-size="15" font-weight="600" fill="#111827">Each one supplies its data; only the conductor gives orders</text>
+  <g fill="none" stroke="#6b7280" stroke-width="1.25">
+    <rect x="24" y="52" width="166" height="96" rx="8"/><rect x="206" y="52" width="166" height="96" rx="8"/>
+    <rect x="388" y="52" width="166" height="96" rx="8"/><rect x="570" y="52" width="166" height="96" rx="8"/>
+    <path d="M107 148V184M289 148V184M471 148V184M653 148V184M107 184H653"/>
+    <path d="M188 184V232" marker-end="url(#a)"/><path d="M572 184V232" marker-end="url(#a)"/>
+    <path d="M408 280H352" marker-end="url(#a)"/>
+    <rect x="408" y="232" width="328" height="96" rx="8" stroke-dasharray="5 4"/>
+  </g>
+  <rect x="24" y="232" width="328" height="96" rx="8" fill="#2563eb" fill-opacity="0.12" stroke="#2563eb" stroke-width="2"/>
+  <g fill="#111827" font-size="13" font-weight="600">
+    <text x="40" y="76">HA meters</text><text x="222" y="76">Electricity tariffs</text><text x="404" y="76">Zendure SolarFlow</text><text x="586" y="76">F1ATB router</text>
+    <text x="40" y="256">Energy conductor</text><text x="424" y="256">Solar payback *</text>
+  </g>
+  <g fill="#4b5563">
+    <text x="40" y="96">Solar production</text><text x="40" y="112">Grid import, export</text><text x="40" y="128">Any brand</text>
+    <text x="222" y="96">Prices, forecasts</text><text x="222" y="112">Off-peak hours, Tempo</text><text x="222" y="128">Resale price *</text>
+    <text x="404" y="96">Level, meters</text><text x="404" y="112">Energy origin *</text><text x="404" y="128">External control</text>
+    <text x="586" y="96">Schedule, water tank</text><text x="586" y="112">Routed energy</text><text x="586" y="128">External control</text>
+    <text x="380" y="206" text-anchor="middle">read through interface contracts, never required</text>
+    <text x="24" y="360">* coming: Tarifs 1.2.0, Zendure 1.7.0, conductor 1.4.0 and the new Solar payback integration</text>
+  </g>
+  <g fill="#111827">
+    <text x="40" y="276">Night plan, reserve, water tank</text><text x="40" y="292">Only one to drive batteries and router</text><text x="40" y="308">Reads the storage cost as wear *</text>
+    <text x="424" y="276">Savings, payback, cost per kWh</text><text x="424" y="292">Read only, any history source</text><text x="424" y="308">Publishes the storage cost</text>
+  </g>
+</svg>

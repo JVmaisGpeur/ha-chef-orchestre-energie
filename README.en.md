@@ -12,6 +12,20 @@ Every evening it answers three questions:
 2. Is the gain worth the battery losses? If not, the battery stays off at night, with no useless cycle.
 3. At what power can it charge without tripping the main breaker, given the water heater, heat pump or EV?
 
+## The ecosystem
+
+![Energy ecosystem: meters, Tarifs, Zendure and the router supply their data; the conductor and Solar payback read it](images/ecosystem.svg)
+
+The conductor leads a small ecosystem of integrations that each work on their own:
+
+- **Home Assistant meters**, of any brand: solar production, grid import, grid export.
+- **[Tarifs Électricité](https://github.com/JVmaisGpeur/ha-tarifs-electricite)**: current price and forecasts, off-peak hours, Tempo, subscribed power.
+- **[Zendure SolarFlow Local](https://github.com/JVmaisGpeur/ha-zendure-solarflow-local)**: the batteries, their measurements and their external control by a pilot.
+- **[F1ATB router](https://github.com/JVmaisGpeur/ha-routeur-f1atb)**: the solar router of the water tank, also drivable.
+- **Solar payback** (coming): savings, payback and cost per kWh of the installation; it will give the conductor the battery wear cost.
+
+The conductor reads this data through the interface contracts published in each README, and it is the only one that drives the batteries and the router. A missing integration blocks nothing: the feature that depends on it is simply turned off, and the card says so.
+
 ## Requirements
 
 | Integration | Version | Role |
@@ -22,7 +36,7 @@ Every evening it answers three questions:
 | The Home Assistant Energy dashboard (recommended) | – | The house consumption is learned from it with nothing to enter |
 | A panel power sensor (optional) | – | For example Shelly Pro 3EM, for the Energy card gauge and router unlocking |
 | [ha-zendure-solarflow-local](https://github.com/JVmaisGpeur/ha-zendure-solarflow-local) ≥ 1.6.0 (optional) | – | Charge/discharge ceilings, power not to cover, calibration: excluded loads and router |
-| [ha-routeur-f1atb](https://github.com/JVmaisGpeur/ha-routeur-f1atb) ≥ 1.0.0 (optional) | – | F1ATB solar router to drive |
+| [ha-routeur-f1atb](https://github.com/JVmaisGpeur/ha-routeur-f1atb) ≥ 1.1.0 (optional) | – | F1ATB solar router to drive |
 
 With Forecast.Solar, add one entry per panel orientation: the conductor adds them up hour by hour, like the Energy dashboard.
 

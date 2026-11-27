@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 384" width="760" height="384" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11.5">
+  <title>Chacun fournit ses données ; seul le Chef commande</title>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6b7280"/></marker></defs>
+  <rect x="0" y="0" width="760" height="384" rx="12" fill="#ffffff"/>
+  <text x="24" y="32" font-size="15" font-weight="600" fill="#111827">Chacun fournit ses données ; seul le Chef commande</text>
+  <g fill="none" stroke="#6b7280" stroke-width="1.25">
+    <rect x="24" y="52" width="166" height="96" rx="8"/><rect x="206" y="52" width="166" height="96" rx="8"/>
+    <rect x="388" y="52" width="166" height="96" rx="8"/><rect x="570" y="52" width="166" height="96" rx="8"/>
+    <path d="M107 148V184M289 148V184M471 148V184M653 148V184M107 184H653"/>
+    <path d="M188 184V232" marker-end="url(#a)"/><path d="M572 184V232" marker-end="url(#a)"/>
+    <path d="M408 280H352" marker-end="url(#a)"/>
+    <rect x="408" y="232" width="328" height="96" rx="8" stroke-dasharray="5 4"/>
+  </g>
+  <rect x="24" y="232" width="328" height="96" rx="8" fill="#2563eb" fill-opacity="0.12" stroke="#2563eb" stroke-width="2"/>
+  <g fill="#111827" font-size="13" font-weight="600">
+    <text x="40" y="76">Compteurs HA</text><text x="222" y="76">Tarifs électricité</text><text x="404" y="76">Zendure SolarFlow</text><text x="586" y="76">Routeur F1ATB</text>
+    <text x="40" y="256">Chef d'orchestre énergie</text><text x="424" y="256">Rentabilité solaire *</text>
+  </g>
+  <g fill="#4b5563">
+    <text x="40" y="96">Production solaire</text><text x="40" y="112">Réseau, injection</text><text x="40" y="128">Toute marque</text>
+    <text x="222" y="96">Prix, prévisions</text><text x="222" y="112">Heures creuses, Tempo</text><text x="222" y="128">Prix de revente *</text>
+    <text x="404" y="96">Niveau, compteurs</text><text x="404" y="112">Provenance *</text><text x="404" y="128">Prise de main</text>
+    <text x="586" y="96">Plage, ballon</text><text x="586" y="112">Énergie routée</text><text x="586" y="128">Prise de main</text>
+    <text x="380" y="206" text-anchor="middle">lu par les contrats d'interface, jamais imposé</text>
+    <text x="24" y="360">* à venir : Tarifs 1.2.0, Zendure 1.7.0, Chef 1.4.0 et la nouvelle intégration Rentabilité solaire</text>
+  </g>
+  <g fill="#111827">
+    <text x="40" y="276">Plan de la nuit, réserve, ballon</text><text x="40" y="292">Seul à commander batteries et routeur</text><text x="40" y="308">Lit le coût de stockage comme usure *</text>
+    <text x="424" y="276">Économies, amortissement, prix du kWh</text><text x="424" y="292">Lecture seule, toute source d'historique</text><text x="424" y="308">Publie le coût de stockage</text>
+  </g>
+</svg>
