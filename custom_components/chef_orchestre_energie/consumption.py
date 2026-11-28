@@ -203,6 +203,26 @@ def ac_efficiency(
     return eta, eta_c, eta_d
 
 
+CYCLE_MIN = 3  # cycles complets d'énergie chargée, au minimum (F2, v1.4.1)
+CYCLE_MIN_KWH = 10.0
+CYCLE_MAX_STOCK_SHARE = 0.25  # variation du stock au plus un quart de l'énergie chargée
+
+
+def cycle_efficiency(charged: float, delivered: float, stock_change: float, capacity: float) -> float | None:
+    """F2 (v1.4.1) : rendement aller-retour sur une période, corrigé de la variation du stock.
+
+    (énergie rendue + variation du stock) ÷ énergie chargée : une batterie qui finit la
+    période plus vide qu'au début a rendu une énergie qu'elle n'a pas rechargée, qui ne
+    doit pas compter comme rendue sans perte. Variation du stock = (niveau à la fin −
+    niveau au début) × capacité utile. None : trop peu de cycles, ou stock trop changeant.
+    """
+    if capacity <= 0 or charged < max(CYCLE_MIN * capacity, CYCLE_MIN_KWH):
+        return None
+    if abs(stock_change) > CYCLE_MAX_STOCK_SHARE * charged:
+        return None
+    return round((delivered + stock_change) / charged, 3)
+
+
 def within_efficiency_bounds(eta: float | None) -> bool:
     return eta is not None and EFFICIENCY_BOUNDS[0] <= eta <= EFFICIENCY_BOUNDS[1]
 

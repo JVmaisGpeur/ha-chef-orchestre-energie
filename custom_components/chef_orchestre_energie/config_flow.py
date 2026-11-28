@@ -596,7 +596,17 @@ class ChefOptionsFlow(OptionsFlow):
     async def async_step_economy(self, user_input=None) -> ConfigFlowResult:
         if user_input is not None:
             return self._save(user_input)
-        return self.async_show_form(step_id="economy", data_schema=_economy_schema(self._cur))
+        # v1.4.1 (F1) : seuil, réserve et profil se règlent aussi à chaud (entités de la carte) ;
+        # l'écran montre les valeurs en vigueur, pour qu'un simple « Valider » ne les écrase pas
+        cur = dict(self._cur)
+        orch = getattr(self.config_entry, "runtime_data", None)
+        if orch is not None:
+            for key, attr in ((CONF_GAIN_THRESHOLD, "gain_threshold"), (CONF_RESERVE_SOC, "reserve_soc"),
+                              (CONF_PROFILE, "profile_name")):
+                value = getattr(orch, attr, None)
+                if value is not None:
+                    cur[key] = value
+        return self.async_show_form(step_id="economy", data_schema=_economy_schema(cur))
 
     async def async_step_power(self, user_input=None) -> ConfigFlowResult:
         errors: dict[str, str] = {}

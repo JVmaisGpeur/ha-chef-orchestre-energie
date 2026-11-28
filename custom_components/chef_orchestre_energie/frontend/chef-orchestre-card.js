@@ -9,7 +9,7 @@
  *   show_settings: true    # réglages rapides
  *   show_days: true        # plan du jour et plan du lendemain (v1.4.0)
  */
-const CARD_VERSION = "1.4.0";
+const CARD_VERSION = "1.4.1";
 const DOMAIN = "chef_orchestre_energie";
 
 const HELP_KEYS = ["plan", "nightActive", "nightKept", "efficiency", "wear", "gain", "savings", "days", "chart", "modes", "settings"];
@@ -50,7 +50,7 @@ const I18N = {
       plan: "Ce que le Chef d'orchestre a décidé pour la prochaine nuit : charger au réseau en heures creuses, ou non, et pourquoi. Touchez le bloc pour le détail.",
       nightActive: "Demain, le soleil prévu remplira la batterie. Elle peut donc alimenter la maison cette nuit, en gardant de quoi couvrir les heures pleines de demain avant le soleil, avec une marge.",
       nightKept: "La batterie ne descend pas cette nuit : le soleil de demain ne suffira pas à la remplir, et son énergie vaut plus en heures pleines.",
-      efficiency: "Mesuré côté prise sur 30 jours : ce qui ressort vers la maison pour ce qui est entré du réseau. Sans mesure fiable (hors 60 à 95 %), le rendement saisi est utilisé.",
+      efficiency: "Mesuré sur 30 jours côté prise : ce qui ressort vers la maison pour ce qui est entré du réseau. Si les compteurs ne le permettent pas, mesuré sur 90 jours en tenant compte du niveau de charge au début et à la fin. Sans mesure fiable (hors 60 à 95 %), le rendement saisi est utilisé.",
       wear: "Le coût d'usure par kWh rendu, lu dans la Rentabilité solaire ou saisi, ajouté au coût d'une recharge.",
       gain: "Ce que la recharge de cette nuit doit faire économiser demain : l'énergie rendue aux heures pleines, moins son coût en heures creuses, pertes et usure comprises.",
       savings: "Ce que la batterie a évité d'acheter, moins ce qu'a coûté sa recharge et le surplus qu'elle a pris au lieu de le revendre. La Rentabilité solaire compte la même chose sur toute la vie de la batterie.",
@@ -95,7 +95,7 @@ const I18N = {
       plan: "What the Energy conductor decided for the next night: charge from the grid during off-peak hours or not, and why. Tap the block for details.",
       nightActive: "Tomorrow's forecast sun will refill the battery. It can therefore power the house tonight, keeping enough to cover tomorrow's peak hours before the sun, with a margin.",
       nightKept: "The battery does not go down tonight: tomorrow's sun will not be enough to refill it, and its energy is worth more at peak hours.",
-      efficiency: "Measured at the plug over 30 days: what comes out to the house for what came in from the grid. Without a reliable measurement (outside 60 to 95 %), the entered efficiency is used.",
+      efficiency: "Measured at the plug over 30 days: what comes out to the house for what came in from the grid. If the meters do not allow it, measured over 90 days taking the charge level at the start and the end into account. Without a reliable measurement (outside 60 to 95 %), the entered efficiency is used.",
       wear: "The wear cost per kWh delivered, read from Solar payback or entered, added to the cost of a charge.",
       gain: "What tonight's charge should save tomorrow: the energy delivered at peak hours, minus its off-peak cost, losses and wear included.",
       savings: "What the battery avoided buying, minus the cost of charging it and of the surplus it took instead of selling it. Solar payback counts the same over the whole life of the battery.",

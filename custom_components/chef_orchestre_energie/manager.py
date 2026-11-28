@@ -84,6 +84,7 @@ from .const import (
     UNIT_SOC_KEYS,
     DEFAULTS,
     DOMAIN,
+    CYCLE_EFFICIENCY_DAYS,
     EFFICIENCY_DAYS,
     ENERGY_COUNTER_KEYS,
     PAYBACK_DOMAIN,
@@ -112,6 +113,7 @@ from .const import (
 from .consumption import (
     ConsumptionProfile,
     ac_efficiency,
+    cycle_efficiency,
     correction_factor,
     hourly_changes,
     measured_efficiency,
@@ -212,6 +214,7 @@ class Orchestrator:
         self.eta_discharge: float | None = None
         self.measured_raw: float | None = None
         self.efficiency_basis = "none"
+        self.cycle_info: dict[str, Any] | None = None  # F2 (v1.4.1)
         self.solar_factor = 1.0
         self.solar_history: dict[str, float] = {}
         # Suivi
@@ -1157,18 +1160,28 @@ class Orchestrator:
                 by_hour("energy_grid_input"), charged, discharged, by_hour("energy_output_home")
             )
             self.efficiency_basis = "ac"
-        else:  # compteurs côté prise absents : mesure dans le pack, comme en v1.3.6
-            measured = measured_efficiency(sum(charged.values()), sum(discharged.values()), 0.0) or None
+        else:  # compteurs côté prise absents : la mesure sur cycles (F2) prend le relais
+            measured = None
             self.eta_charge = self.eta_discharge = None
             self.efficiency_basis = "pack"
         self.measured_raw = measured
-        if measured is not None and not within_efficiency_bounds(measured):
-            _LOGGER.warning(
-                "Rendement mesuré de %.0f %% hors des bornes 60-95 %% : rendement saisi (%.0f %%) gardé",
-                measured * 100,
-                self.efficiency * 100,
-            )
-            measured = None
+        self.cycle_info = None
+        if measured is None or not within_efficiency_bounds(measured):
+            # F2 (v1.4.1) : compteurs côté prise identiques à ceux du pack, ou absents :
+            # rendement sur 90 jours, corrigé de la variation du stock
+            cycles = await self._async_cycle_efficiency(counters, end)
+            if cycles is not None and within_efficiency_bounds(cycles["efficiency"]):
+                measured = cycles["efficiency"]
+                self.efficiency_basis = "cycles"
+                self.cycle_info = cycles
+            else:
+                if measured is not None:
+                    _LOGGER.info(
+                        "Rendement mesuré de %.0f %% hors des bornes 60-95 %% : rendement saisi (%.0f %%) gardé",
+                        measured * 100,
+                        self.efficiency * 100,
+                    )
+                measured = None
         self.measured_efficiency = measured
 
         # Facteur de correction solaire sur 14 jours
@@ -1848,6 +1861,46 @@ class Orchestrator:
         await self.hass.services.async_call(
             "number", "set_value", {"entity_id": entity_id, "value": value}, blocking=True
         )
+
+    async def _async_cycle_efficiency(self, counters: dict[str, list[str]], end: datetime) -> dict[str, Any] | None:
+        """F2 (v1.4.1) : rendement sur 90 jours = (rendu + variation du stock) ÷ chargé.
+
+        Compteurs côté prise s'ils existent, sinon ceux du pack ; stock = niveau de charge
+        du groupe × capacité utile, au début et à la fin de la période enregistrée.
+        """
+        level = self.battery_entities.get("electric_level")
+        capacity = src.state_float(self.hass, self.battery_entities.get("usable_capacity"))
+        if not level or not capacity:
+            return None
+        socs = await src.async_hourly_means(self.hass, level, end - timedelta(days=CYCLE_EFFICIENCY_DAYS), end)
+        if len(socs) < 48:
+            return None
+        t0, t1 = min(socs), max(socs)
+        if counters.get("energy_grid_input") and counters.get("energy_output_home"):
+            key_in, key_out = "energy_grid_input", "energy_output_home"
+        else:
+            key_in, key_out = "energy_charged", "energy_discharged"
+        ids_in, ids_out = list(counters.get(key_in) or []), list(counters.get(key_out) or [])
+        if not ids_in or not ids_out:
+            return None
+        sums = await src.async_hourly_sums(self.hass, ids_in + ids_out, t0, t1 + timedelta(hours=1))
+
+        def total(ids: list[str]) -> float:
+            return sum(v for sid in ids for _ts, v in hourly_changes(sums.get(sid, [])))
+
+        charged, delivered = total(ids_in), total(ids_out)
+        stock_change = (socs[t1] - socs[t0]) / 100 * capacity
+        eta = cycle_efficiency(charged, delivered, stock_change, capacity)
+        if eta is None:
+            return None
+        return {
+            "efficiency": eta,
+            "since": t0.isoformat(),
+            "charged_kwh": round(charged, 1),
+            "delivered_kwh": round(delivered, 1),
+            "stock_change_kwh": round(stock_change, 2),
+            "meters": "ac" if key_in == "energy_grid_input" else "pack",
+        }
 
     def _wear(self) -> float:
         """C4 : usure par kWh restitué, lue dans la Rentabilité solaire si elle est là."""

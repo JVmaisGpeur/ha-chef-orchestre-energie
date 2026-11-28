@@ -285,6 +285,34 @@ async def async_hourly_sums(
     return out
 
 
+async def async_hourly_means(
+    hass: HomeAssistant, statistic_id: str | None, start: datetime, end: datetime
+) -> dict[datetime, float]:
+    """Moyennes horaires enregistrées d'un capteur (niveau de charge…) : {début d'heure: moyenne}."""
+    if not statistic_id:
+        return {}
+    try:
+        from homeassistant.components.recorder import get_instance
+        from homeassistant.components.recorder.statistics import statistics_during_period
+    except ImportError:  # pragma: no cover - recorder absent
+        return {}
+    try:
+        stats = await get_instance(hass).async_add_executor_job(
+            statistics_during_period, hass, start, end, {statistic_id}, "hour", None, {"mean"}
+        )
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Lecture des statistiques impossible : %s", err)
+        return {}
+    out: dict[datetime, float] = {}
+    for row in stats.get(statistic_id, []):
+        if row.get("mean") is None:
+            continue
+        ts = row["start"]
+        ts = dt_util.utc_from_timestamp(ts) if isinstance(ts, (int, float)) else ts
+        out[dt_util.as_local(ts)] = float(row["mean"])
+    return out
+
+
 async def async_energy_prefs(hass: HomeAssistant) -> dict | None:
     """Configuration du tableau Énergie de Home Assistant, si elle existe."""
     try:

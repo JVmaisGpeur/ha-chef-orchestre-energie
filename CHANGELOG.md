@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.1 – 28/11/2026
+
+- **Correction (F1)** : Configurer → Économie affiche maintenant les valeurs en vigueur du seuil de rentabilité, de la réserve si non rentable et du profil de prudence, y compris celles réglées depuis la carte. Valider l'écran sans rien changer ne remet plus l'ancienne valeur (un seuil réglé à 0,05 €/kWh revenait à 0,10).
+- **Rendement mesuré sur des cycles (F2)** : quand les compteurs côté prise ne permettent pas la mesure (identiques à ceux du pack, comme sur la SolarFlow 2400 AC, ou absents), le rendement se mesure sur 90 jours : (énergie rendue + variation du stock) ÷ énergie chargée, la variation du stock venant du niveau de charge × la capacité utile. Il faut au moins 3 cycles complets ; sinon le rendement saisi reste. L'ancienne mesure (sortie ÷ entrée) donnait 98 % quand la batterie finissait la période plus vide qu'au début. Attributs `basis: cycles` et `cycles` du capteur « Rendement de la batterie » ; le message « hors des bornes » n'est plus un avertissement.
 ## 1.4.0 – 28/11/2026
 
 - **Nuit sur batterie quand le soleil de demain suffit (P1)** : les nuits sans recharge au réseau, la batterie alimente la maison en heures creuses (nuits, week-ends, jours fériés) avec l'énergie dont les prochaines heures pleines n'auront pas besoin. Le plancher (besoin des prochaines heures pleines + marge + réserve de 2 kWh, moins le soleil prévu d'ici là) est recalculé à chaque quart d'heure ; sous le plancher, la batterie passe en `smart_charge`, sans écriture du SOC minimum. Réglages « Nuit sur batterie » et « Réserve gardée la nuit » dans Configurer → Économie. Jamais pendant une charge planifiée (ballon, voiture) ni sans prévision solaire. Quand elle s'applique, le plancher remplace la réserve fixe de 50 %.

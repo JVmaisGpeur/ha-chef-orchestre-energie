@@ -39,3 +39,21 @@ def test_heures_avec_solaire_continu_ignorees():
     )
     assert eta_c == 0.9
     assert eta == 0.81
+
+# ------------------------------------------------------------------ F2 (v1.4.1) : rendement sur cycles
+def test_rendement_sur_cycles_compteurs_identiques():
+    # 834 kWh chargés, 736 kWh rendus, niveau inchangé : 88 %
+    assert C.cycle_efficiency(834, 736, 0.0, 20.64) == 0.882
+
+
+def test_rendement_sur_cycles_corrige_du_stock():
+    # Même énergie rendue, mais la batterie finit 12 kWh plus vide : sans correction 98 %
+    assert C.cycle_efficiency(100, 98, -12.0, 20.0) == 0.86
+    # finit plus pleine : l'énergie stockée compte comme rendue
+    assert C.cycle_efficiency(100, 76, 12.0, 20.0) == 0.88
+
+
+def test_rendement_sur_cycles_trop_peu_de_cycles():
+    assert C.cycle_efficiency(40, 35, 0.0, 20.0) is None  # moins de 3 cycles
+    assert C.cycle_efficiency(5, 4, 0.0, 1.0) is None  # moins de 10 kWh
+    assert C.cycle_efficiency(100, 60, 30.0, 20.0) is None  # stock trop changeant

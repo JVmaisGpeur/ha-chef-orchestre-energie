@@ -195,4 +195,17 @@ async def test_options_menu(hass: HomeAssistant) -> None:
     entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert entry.options["gain_threshold"] == 0.03
     assert entry.state is config_entries.ConfigEntryState.LOADED
-    await _decharger(hass, entry)
+
+    # v1.4.1 (F1) : seuil réglé à chaud sur la carte, puis « Valider » sans rien changer
+    seuil = next(e for u, e in _entites(hass, entry).items() if u.endswith("_gain_threshold"))
+    await hass.services.async_call("number", "set_value", {"entity_id": seuil, "value": 0.05}, blocking=True)
+    await hass.async_block_till_done()
+    r = await opts.async_init(entry.entry_id)
+    r = await opts.async_configure(r["flow_id"], {"next_step_id": "economy"})
+    valeurs = r["data_schema"]({})  # ce que le formulaire propose
+    assert valeurs["gain_threshold"] == 0.05, valeurs
+    r = await opts.async_configure(r["flow_id"], valeurs)
+    assert r["type"] is FlowResultType.CREATE_ENTRY, r
+    await hass.async_block_till_done()
+    assert float(hass.states.get(seuil).state) == 0.05
+    await _decharger(hass, hass.config_entries.async_get_entry(entry.entry_id))

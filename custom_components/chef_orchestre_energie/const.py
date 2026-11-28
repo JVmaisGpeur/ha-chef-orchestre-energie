@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "chef_orchestre_energie"
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 PLATFORMS = ["binary_sensor", "button", "number", "select", "sensor", "switch", "time"]
 
 # Intégrations lues et versions minimales (contrats, interface 1)
@@ -188,6 +188,7 @@ HORIZON_HOURS = 48
 PLAN_INTERVAL_MIN = 15
 CONTROL_INTERVAL_S = 60
 EFFICIENCY_DAYS = 30
+CYCLE_EFFICIENCY_DAYS = 90  # F2 (v1.4.1) : rendement sur cycles, corrigé du niveau de charge
 SOLAR_FACTOR_DAYS = 14
 STORE_VERSION = 1
 

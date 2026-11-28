@@ -268,6 +268,8 @@ class ChefSensor(ChefEntity, SensorEntity):
                 "discharge_efficiency": o.eta_discharge,
                 "measured_raw": o.measured_raw,
                 "configured": round(o.efficiency, 3),
+                # F2 (v1.4.1) : mesure sur cycles (période, énergies, variation du stock)
+                "cycles": o.cycle_info,
             }
         if key == "charge_cost_month":
             cc = self.orch.charge_cost
