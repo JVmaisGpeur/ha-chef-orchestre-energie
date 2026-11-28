@@ -64,17 +64,30 @@ La consommation de la maison est lue dans le tableau Énergie de Home Assistant.
 Avant chaque début d'heures creuses (et dès qu'une donnée change), il simule par pas de 15 minutes la période qui va de la fin de cette nuit au début des heures creuses suivantes :
 
 - le solaire couvre d'abord la maison, le surplus entre dans la batterie ;
-- une charge réseau n'est utile que si `prix HP − (prix HC ÷ rendement + usure)` dépasse le **seuil de rentabilité** (0,02 €/kWh par défaut) ;
+- une charge réseau n'est utile que si `prix HP − (prix HC ÷ rendement + usure)` dépasse le **seuil de rentabilité** (0,02 €/kWh par défaut). Le **rendement** est mesuré côté prise sur 30 jours (ce qui ressort vers la maison pour ce qui est entré du réseau), entre 60 et 95 % ; sinon le rendement saisi (85 %) est gardé. L'**usure** est lue dans la Rentabilité solaire (`storage_cost`) quand elle est installée, sinon la valeur saisie ;
 - il cherche l'énergie minimale en batterie pour ne jamais descendre sous le SOC minimum pendant ces heures, majorée de la marge du profil (prudent 20 %, équilibré 10 %, économe 0 %) ;
 - si la batterie est trop petite, il garde l'énergie pour les heures les plus chères.
 
 | Situation | Mode envoyé à la batterie |
 | --- | --- |
-| Heures creuses, pas de charge | `off` (ou `smart_charge` s'il y a du soleil) |
+| Heures creuses, pas de charge, nuit sur batterie | `smart` tant que le niveau est au-dessus du plancher, puis `smart_charge` |
+| Heures creuses, pas de charge, batterie gardée | `off` (ou `smart_charge` s'il y a du soleil) |
 | Heures creuses, charge prévue | `grid_charge` jusqu'au SOC cible, en finissant 30 min avant la fin des HC |
 | Heures pleines | `smart` |
 | Heures pleines réservées pour plus tard | `smart_charge` |
 | Pilotage coupé ou données manquantes | aucune commande |
+
+### Nuit sur batterie quand le soleil de demain suffit
+
+Les nuits sans recharge au réseau, la batterie alimente la maison pendant les heures creuses avec l'énergie dont les prochaines heures pleines n'auront pas besoin (Configurer → Économie, « Nuit sur batterie », activé par défaut).
+
+- **Plancher** : à chaque quart d'heure creux, le Chef d'orchestre calcule l'énergie à garder : le besoin des prochaines heures pleines (consommation moins solaire prévu, pertes comprises), plus la marge du profil, plus la « réserve gardée la nuit » (2 kWh par défaut), moins le surplus solaire prévu d'ici là. Un samedi matin, le soleil du week-end compte ; avant un long week-end en heures creuses dont la fin dépasse les prévisions, seule la réserve est gardée.
+- **Pilotage** : la batterie est en mode intelligent tant que son niveau est au-dessus du plancher, puis passe en ``smart_charge`` (elle ne se décharge plus, mais stocke encore un éventuel surplus). Aucune écriture du SOC minimum, donc aucune usure de la mémoire de la batterie.
+- **Batterie gardée** : si le plancher est au-dessus du niveau, rien ne change par rapport aux versions précédentes.
+- **Jamais** pendant une nuit de recharge, une consigne imposée, une charge planifiée (ballon, voiture, gros consommateur) ou sans prévision solaire (``night_on_battery: unavailable``).
+- Quand elle s'applique, ce plancher remplace la réserve fixe des nuits non rentables.
+
+Simulation sur les données réelles de mars à novembre 2026 (offre avec week-ends en heures creuses) : 30,65 € d'électricité achetée au lieu de 121,19 € avec la version précédente.
 
 ### SOC minimum et maximum (réserve)
 
@@ -95,10 +108,13 @@ Pendant la charge, la limite de soutirage vaut `puissance souscrite × (1 − ma
 | Seuil de rentabilité | €/kWh, modifiable à chaud |
 | Réserve si non rentable | SOC minimum appliqué pendant les heures creuses des nuits non rentables (0 à 50 %) |
 | Puissance au tableau | Puissance appelée, avec la puissance souscrite, la marge et l'état des gros consommateurs en attributs |
-| Plan de la nuit | Charge, repos, non rentable, rien à couvrir, suspendu, données manquantes ; attributs `reason` et `hourly_plan` |
+| Plan de la nuit | Charge, repos, non rentable, rien à couvrir, suspendu, données manquantes ; attributs `reason`, `hourly_plan`, `night_on_battery`, `night_floor_soc`, `tomorrow_need_kwh`, `wear`, `wear_source`, `day_start` et `days` |
 | Énergie à charger, SOC cible, Début de charge | Le plan de la nuit |
 | Consommation prévue, Besoin en heures pleines, Production solaire prévue | Les prévisions utilisées |
-| Gain prévu, Économies du mois | Ce que ça rapporte |
+| Gain prévu, Économies du mois | Ce que ça rapporte. Avec Zendure ≥ 1.7.0, les économies du mois retirent le coût réel de la recharge (réseau au prix de chaque minute, solaire au prix de revente) |
+| Coût de recharge du mois | Avec Zendure ≥ 1.7.0 : énergie réseau chargée × prix du moment, remis à zéro le 1er du mois ; kWh réseau et solaire et prix moyen en attributs |
+| Coût de l'énergie en stock | Avec Zendure ≥ 1.7.0 : ce qu'a coûté l'énergie dans la batterie (€/kWh), coût une fois rendu, part solaire. Information seulement : aucune décision n'en dépend |
+| Début de journée du plan, Heure de début de journée | Où commencent les cases « Plan du jour » et « Plan du lendemain » : fin des heures creuses (défaut), début des heures creuses, minuit ou heure fixe |
 | Rendement de la batterie, Fiabilité de la prévision | Diagnostic |
 | Alerte puissance | Risque de dépasser la puissance souscrite |
 | Recalculer | Relance le calcul |
@@ -123,7 +139,7 @@ Les blocs sont masqués par défaut, comme dans la carte Tarifs ; l'éditeur vis
 
 - **En-tête** : interrupteur « Pilotage actif / coupé ».
 - **Tarif en cours** : période, prix, prochain changement, prix de l'autre période ; bouton vers la carte Tarifs électricité.
-- **Batteries** : SOC du groupe, puissance, mode (« Piloté par le Chef d'orchestre » ou « Réglé dans la carte Zendure »), et pour chaque batterie son SOC, sa puissance, ses SOC min et max ; bouton vers la carte Zendure.
+- **Batteries** : SOC du groupe, puissance, mode (« Piloté par le Chef d'orchestre » ou « Réglé dans la carte Zendure »), et pour chaque batterie son SOC, sa puissance, ses SOC min et max ; avec Zendure ≥ 1.7.0, la ligne « Stock : 62 % solaire · énergie en stock à 0,12 €/kWh » et le coût de recharge du mois ; bouton vers la carte Zendure.
 - **Plan pour demain** : rentable, non rentable ou en pause, solaire prévu, consommation estimée, énergie à charger, écart de prix face au seuil, créneau de charge, SOC minimum appliqué ; bouton vers la carte détaillée ci-dessous.
 - **Puissance au tableau** : jauge face à la puissance souscrite, marge avant disjonction, gros consommateurs.
 - **Pied** : accès aux réglages du Chef d'orchestre.
@@ -140,9 +156,10 @@ name: Batteries            # facultatif
 show_chart: true           # graphique des 48 h à venir
 show_modes: true           # frise des modes prévus
 show_settings: true        # réglages rapides
+show_days: true            # plan du jour et plan du lendemain
 ```
 
-Elle montre le plan de la nuit et sa raison, les chiffres clés (énergie à charger, SOC cible, heure de début, gain prévu, économies du mois), le SOC simulé et les prix sur 48 h avec les heures creuses, la frise des modes, les alertes, et les réglages rapides (profil de prudence, seuil de rentabilité, recalcul). Elle suit la langue et le thème de Home Assistant.
+Elle montre le plan de la nuit et sa raison, la nuit sur batterie (« Cette nuit : la batterie alimente la maison jusqu'à 47 % »), le rendement et l'usure utilisés, les chiffres clés (énergie à charger, SOC cible, heure de début, gain prévu, économies du mois), le SOC simulé et les prix sur 48 h avec les heures creuses, la frise des modes, les alertes, les cases « Plan du jour » et « Plan du lendemain » (charge prévue, réserve, niveau des batteries au début, au plus bas et à la fin, énergie et coût estimé de la charge), et les réglages rapides (profil de prudence, seuil de rentabilité, début de journée, recalcul). Chaque bloc a son bouton « i ». Elle suit la langue et le thème de Home Assistant.
 
 ## Gros consommateurs
 
@@ -202,8 +219,9 @@ Quand le pilotage est actif, il se déclare aussi auprès de ha-zendure-solarflo
 
 Le Chef d'orchestre ne lit les autres intégrations que par leurs contrats publics :
 
-- ha-tarifs-electricite (clés en français) : service `tarifs_electricite.previsions`, capteurs `puissance_souscrite`, `offre`, `prix_actuel`, `tempo_demain` ;
-- ha-zendure-solarflow-local (clés en anglais) : `operating_mode`, `import_limit`, `charge_target_soc`, `electric_level`, `usable_capacity`, `available_energy`, `missing_energy`, `battery_power`, `max_charge_power`, `max_discharge_power`, `regulation_state`, et par batterie `min_soc` et `soc_set` (sans eux, la réserve est désactivée avec une alerte dans Réparations) ; en 1.6.0, `charge_power_limit`, `discharge_power_limit`, `excluded_power` et par batterie `calibrating`, détectés par leur présence ;
+- ha-tarifs-electricite (clés en français) : service `tarifs_electricite.previsions`, capteurs `puissance_souscrite`, `offre`, `prix_actuel`, `tempo_demain` ; `prix_revente` (≥ 1.2.0) s'il existe, 0 sinon ;
+- ha-zendure-solarflow-local (clés en anglais) : `operating_mode`, `import_limit`, `charge_target_soc`, `electric_level`, `usable_capacity`, `available_energy`, `missing_energy`, `battery_power`, `max_charge_power`, `max_discharge_power`, `regulation_state`, et par batterie `min_soc` et `soc_set` (sans eux, la réserve est désactivée avec une alerte dans Réparations) ; en 1.6.0, `charge_power_limit`, `discharge_power_limit`, `excluded_power` et par batterie `calibrating`, détectés par leur présence ; compteurs `energy_charged`, `energy_discharged`, `energy_grid_input`, `energy_output_home` (rendement côté prise) ; en 1.7.0, `energy_charged_grid`, `energy_charged_solar`, `stored_energy_grid` (attribut `initial_share`), `stored_energy_solar` et `stored_solar_share`, facultatifs ;
+- Rentabilité solaire (domaine `solar_payback`), si elle est installée : `storage_cost` de chaque batterie (moyenne pondérée par l'attribut `usable_capacity`) ;
 - ha-routeur-f1atb ≥ 1.1.0 (domaine `f1atb_routeur`) : services `set_external_control` (clé `mode` seulement) et `set_mode` (avec `controller`) ; entités `routed_power`, `routed_energy_total`, `water_temperature`, `target_reached`, `connected`, `control_enabled`, `status`, `water_heater_power` (`load_power`, `on_slot_active`, `routing_power_threshold` lues si elles existent).
 
 Les clés techniques du Chef d'orchestre (entités, valeurs, attributs, services) sont en anglais ; les noms affichés sont traduits.

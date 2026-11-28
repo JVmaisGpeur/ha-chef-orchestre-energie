@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 DOMAIN = "chef_orchestre_energie"
-VERSION = "1.3.6"
-PLATFORMS = ["binary_sensor", "button", "number", "select", "sensor", "switch"]
+VERSION = "1.4.0"
+PLATFORMS = ["binary_sensor", "button", "number", "select", "sensor", "switch", "time"]
 
 # Intégrations lues et versions minimales (contrats, interface 1)
 TARIFF_DOMAIN = "tarifs_electricite"
@@ -33,7 +33,8 @@ BATTERY_KEYS = (
     "max_discharge_power",
     "regulation_state",
 )
-ENERGY_COUNTER_KEYS = ("energy_charged", "energy_discharged")
+# compteurs du pack, puis compteurs côté prise (AC) pour le rendement réel (C0, v1.4.0)
+ENERGY_COUNTER_KEYS = ("energy_charged", "energy_discharged", "energy_grid_input", "energy_output_home")
 # SOC minimum et maximum de chaque batterie (E2)
 UNIT_SOC_KEYS = ("min_soc", "soc_set")
 UNIT_SOC_BOUNDS = {"min_soc": (0, 50), "soc_set": (70, 100)}
@@ -45,6 +46,20 @@ CONTROLLER_NAME = "Chef d'orchestre énergie"
 # (détectés par leurs entités, jamais par la version)
 CEILING_KEYS = ("charge_power_limit", "discharge_power_limit", "excluded_power")
 UNIT_CAL_KEYS = ("calibrating",)
+# ha-zendure-solarflow-local ≥ 1.7.0 : provenance de l'énergie de charge (v1.4.0, C1/C2)
+PROVENANCE_KEYS = (
+    "energy_charged_grid",
+    "energy_charged_solar",
+    "stored_energy_grid",
+    "stored_energy_solar",
+    "stored_solar_share",
+)
+PROVENANCE_REQUIRED = PROVENANCE_KEYS[:4]
+# ha-tarifs-electricite ≥ 1.2.0 : prix de revente du surplus (C3), facultatif
+TARIFF_OPTIONAL_KEYS = ("prix_revente",)
+# Rentabilité solaire (C4) : usure par kWh restitué
+PAYBACK_DOMAIN = "solar_payback"
+PAYBACK_WEAR_KEY = "storage_cost"
 
 # ha-routeur-f1atb (domaine f1atb_routeur) : contrat de pilotage externe
 ROUTER_DOMAIN = "f1atb_routeur"
@@ -86,6 +101,8 @@ CONF_SOLAR_ACTUAL = "solar_actual_sensor"
 CONF_DAILY_KWH = "daily_kwh"
 CONF_EFFICIENCY = "efficiency"  # %
 CONF_WEAR = "wear"  # €/kWh
+CONF_WEAR_SOURCE = "wear_source"  # C4 : solar_payback (lue dans la Rentabilité) ou manual
+WEAR_SOURCES = ["solar_payback", "manual"]
 CONF_GAIN_THRESHOLD = "gain_threshold"  # €/kWh
 CONF_PROFILE = "profile"
 CONF_SUBSCRIBED_KVA = "subscribed_kva"
@@ -99,6 +116,8 @@ CONF_TEMPO_ASSUMPTION = "tempo_assumption"
 CONF_FINISH_ADVANCE = "finish_advance"  # min
 CONF_LOADS = "loads"
 CONF_RESERVE_SOC = "reserve_soc"  # % (E2)
+CONF_NIGHT_ON_BATTERY = "night_on_battery"  # P1 (v1.4.0) : nuit sur batterie quand le soleil suffit
+CONF_NIGHT_RESERVE = "night_reserve"  # kWh gardés en plus du besoin des prochaines heures pleines
 CONF_POWER_SENSOR = "power_sensor"  # puissance au tableau (E4)
 CONF_GAUGE_WARN = "gauge_warn"
 CONF_GAUGE_CRIT = "gauge_crit"
@@ -130,6 +149,7 @@ DEFAULTS = {
     CONF_DAILY_KWH: 10.0,
     CONF_EFFICIENCY: 85,
     CONF_WEAR: 0.0,
+    CONF_WEAR_SOURCE: "solar_payback",
     CONF_GAIN_THRESHOLD: 0.02,
     CONF_PROFILE: "balanced",
     CONF_THREE_PHASE: False,
@@ -141,6 +161,8 @@ DEFAULTS = {
     CONF_TEMPO_ASSUMPTION: "blanc",
     CONF_FINISH_ADVANCE: 30,
     CONF_RESERVE_SOC: 50,
+    CONF_NIGHT_ON_BATTERY: True,
+    CONF_NIGHT_RESERVE: 2.0,
     CONF_GAUGE_WARN: 80,
     CONF_GAUGE_CRIT: 95,
     CONF_AUTO_START: True,

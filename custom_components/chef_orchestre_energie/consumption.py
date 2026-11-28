@@ -170,6 +170,43 @@ def measured_efficiency(charged_kwh: float, discharged_kwh: float, default: floa
     return round(min(0.98, max(0.6, discharged_kwh / charged_kwh)), 3)
 
 
+EFFICIENCY_BOUNDS = (0.60, 0.95)  # C0 (v1.4.0) : hors de ces bornes, le rendement saisi reste
+
+
+def ac_efficiency(
+    grid_in: dict, charged: dict, discharged: dict, home_out: dict, min_kwh: float = 5.0
+) -> tuple[float | None, float | None, float | None]:
+    """C0 : rendement aller-retour mesuré côté prise, (η, η_c, η_d), non borné.
+
+    η_c = énergie entrée dans le pack ÷ énergie entrée côté AC (réseau → pack) ;
+    η_d = énergie sortie vers la maison ÷ énergie sortie du pack (pack → maison).
+    Chaque argument : {heure: kWh}. Sur un modèle à entrées PV en courant continu, le
+    pack reçoit aussi le solaire et la maison aussi : seules comptent les heures où le
+    pack n'a pas reçu plus que l'entrée AC (charge) et où la maison n'a pas reçu plus que
+    la sortie du pack (décharge). None si moins de `min_kwh` ont transité.
+    """
+    c_in = c_out = 0.0
+    for ts, ac in grid_in.items():
+        pack = charged.get(ts, 0.0)
+        if ac > 0 and 0 < pack <= ac:
+            c_in += ac
+            c_out += pack
+    d_in = d_out = 0.0
+    for ts, pack in discharged.items():
+        home = home_out.get(ts, 0.0)
+        if pack > 0 and 0 < home <= pack:
+            d_in += pack
+            d_out += home
+    eta_c = round(c_out / c_in, 3) if c_in >= min_kwh else None
+    eta_d = round(d_out / d_in, 3) if d_in >= min_kwh else None
+    eta = round(eta_c * eta_d, 3) if eta_c is not None and eta_d is not None else None
+    return eta, eta_c, eta_d
+
+
+def within_efficiency_bounds(eta: float | None) -> bool:
+    return eta is not None and EFFICIENCY_BOUNDS[0] <= eta <= EFFICIENCY_BOUNDS[1]
+
+
 ENERGY_FACTORS = {"wh": 0.001, "kwh": 1.0, "mwh": 1000.0, "gwh": 1_000_000.0}
 
 

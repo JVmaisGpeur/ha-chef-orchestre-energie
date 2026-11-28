@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .consumption import RELIABILITIES
+from .days import days as days_of
 from .entity import ChefEntity
 from .manager import Orchestrator
 from .planner import PLAN_STATES, Plan
@@ -103,6 +104,26 @@ SENSORS: tuple[ChefSensorDescription, ...] = (
 )
 
 
+# v1.4.0 (C1, C2) : créés seulement avec les capteurs de provenance de Zendure ≥ 1.7.0
+COST_SENSORS: tuple[ChefSensorDescription, ...] = (
+    ChefSensorDescription(
+        key="charge_cost_month",
+        native_unit_of_measurement="EUR",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        suggested_display_precision=2,
+        value_fn=lambda o, p: round(o.charge_cost.cost_eur, 2),
+    ),
+    ChefSensorDescription(
+        key="stock_energy_cost",
+        native_unit_of_measurement="EUR/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=3,
+        value_fn=lambda o, p: o.stock_cost.price_stored(),
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -124,10 +145,22 @@ async def async_setup_entry(
     add_full_charge_sensors()
     orch.units_listener = add_full_charge_sensors
 
+    cost_added = False
+
+    @callback
+    def add_cost_sensors() -> None:
+        nonlocal cost_added
+        if orch.provenance_ok and not cost_added:
+            cost_added = True
+            async_add_entities([ChefSensor(orch, d) for d in COST_SENSORS])
+
+    add_cost_sensors()
+    orch.provenance_listener = add_cost_sensors
+
 
 class ChefSensor(ChefEntity, SensorEntity):
     entity_description: ChefSensorDescription
-    _unrecorded_attributes = frozenset({"hourly_plan"})
+    _unrecorded_attributes = frozenset({"hourly_plan", "days"})
 
     def __init__(self, orch: Orchestrator, description: ChefSensorDescription) -> None:
         super().__init__(orch, description.key)
@@ -184,6 +217,18 @@ class ChefSensor(ChefEntity, SensorEntity):
                 "calibrating": self.orch.calibrating_units,
                 "router_priority": self.orch.cfg.get("router_priority"),
                 "routers": self.orch.router_status,
+                # v1.4.0 : usure (C4), provenance (C1/C2), prix de revente (C3)
+                "wear": round(self.orch.wear_value, 4),
+                "wear_source": self.orch.wear_source,
+                "provenance_available": self.orch.provenance_ok,
+                "resale_price": self.orch.resale_price,
+                # v1.4.0 (P1) : nuit sur batterie quand le soleil de demain suffit
+                "night_on_battery": plan.night_on_battery,
+                "night_floor_soc": plan.night_floor_soc,
+                "tomorrow_need_kwh": None if plan.next_peak_need_kwh is None else round(plan.next_peak_need_kwh, 2),
+                "tomorrow_overflow_kwh": plan.next_peak_overflow_kwh,
+                # v1.4.0 (ex-1.3.7, A3) : plan du jour et du lendemain
+                **self._days(plan),
                 "hourly_plan": [
                     {
                         "start": sp.start.isoformat(),
@@ -193,6 +238,8 @@ class ChefSensor(ChefEntity, SensorEntity):
                         "consumption": round(sp.consumption_kwh, 3),
                         "solar": round(sp.solar_kwh, 3),
                         "off_peak": sp.off_peak,
+                        "charge": round(sp.charge_kwh, 3),  # v1.4.0 (ex-1.3.7, A3)
+                        "floor": sp.floor_soc,  # v1.4.0 (P1)
                     }
                     for sp in plan.steps
                 ],
@@ -212,12 +259,49 @@ class ChefSensor(ChefEntity, SensorEntity):
                 "gauge_crit": self.orch.cfg.get("gauge_crit", 95),
             }
         if key == "measured_efficiency":
-            return {"measured": self.orch.measured_efficiency is not None}
+            o = self.orch
+            return {
+                "measured": o.measured_efficiency is not None,
+                # C0 (v1.4.0) : mesuré côté prise ; charge réseau → pack, décharge pack → maison
+                "basis": o.efficiency_basis,
+                "charge_efficiency": o.eta_charge,
+                "discharge_efficiency": o.eta_discharge,
+                "measured_raw": o.measured_raw,
+                "configured": round(o.efficiency, 3),
+            }
+        if key == "charge_cost_month":
+            cc = self.orch.charge_cost
+            return {
+                "grid_kwh": round(cc.grid_kwh, 3),
+                "solar_kwh": round(cc.solar_kwh, 3),
+                "average_price": cc.average_price,
+                "solar_value": round(cc.solar_value_eur, 2),
+            }
+        if key == "stock_energy_cost":
+            sc, o = self.orch.stock_cost, self.orch
+            eta_d = o.eta_discharge or o.efficiency_used ** 0.5
+            return {
+                "delivered_cost": sc.price_delivered(eta_d),
+                "solar_share": sc.solar_share,
+                "stock_grid_kwh": None if sc.stock_grid is None else round(sc.stock_grid, 2),
+                "stock_solar_kwh": None if sc.stock_solar is None else round(sc.stock_solar, 2),
+                "estimated": sc.estimated,
+            }
         if key == "forecast_solar":
             return {"correction_factor": self.orch.solar_factor}
         if key == "forecast_reliability":
             return {"days_of_data": self.orch.profile.days_of_data}
         return None
+
+    def _days(self, plan: Plan) -> dict[str, Any]:
+        """A3 : `day_start` et `days`, calculés à l'affichage (changer le début de journée
+        met les cases à jour sans recalculer le plan)."""
+        from homeassistant.util import dt as dt_util
+
+        if not plan.steps:
+            return {"day_start": None, "days": []}
+        info, summaries = days_of(plan, dt_util.now(), self.orch.day_start, self.orch.day_start_time)
+        return {"day_start": info, "days": summaries}
 
 
 class FullChargeDaysSensor(ChefEntity, SensorEntity):

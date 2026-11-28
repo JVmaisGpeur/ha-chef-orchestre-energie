@@ -7,7 +7,7 @@ import copy
 from collections import defaultdict
 from dataclasses import replace
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 import logging
 from typing import Any
 
@@ -64,6 +64,8 @@ from .const import (
     CONF_GAUGE_WARN,
     CONF_POWER_SENSOR,
     CONF_RESERVE_SOC,
+    CONF_NIGHT_ON_BATTERY,
+    CONF_NIGHT_RESERVE,
     CONF_SOLAR_ACTUAL,
     CONF_SOLAR_CORRECTION,
     CONF_SOLAR_ENTRIES,
@@ -72,6 +74,7 @@ from .const import (
     CONF_TEMPO_ASSUMPTION,
     CONF_THREE_PHASE,
     CONF_WEAR,
+    CONF_WEAR_SOURCE,
     CONTROL_INTERVAL_S,
     CONTROLLER_NAME,
     EXTERNAL_CONTROL_RENEW_MIN,
@@ -82,6 +85,11 @@ from .const import (
     DEFAULTS,
     DOMAIN,
     EFFICIENCY_DAYS,
+    ENERGY_COUNTER_KEYS,
+    PAYBACK_DOMAIN,
+    PAYBACK_WEAR_KEY,
+    PROVENANCE_REQUIRED,
+    TARIFF_OPTIONAL_KEYS,
     HORIZON_HOURS,
     LOAD_ENERGY_SENSOR,
     LOAD_NAME,
@@ -103,10 +111,14 @@ from .const import (
 )
 from .consumption import (
     ConsumptionProfile,
+    ac_efficiency,
     correction_factor,
     hourly_changes,
     measured_efficiency,
+    within_efficiency_bounds,
 )
+from .costs import ChargeCost, StockCost, value_slices, weighted_wear
+from .days import DAY_STARTS, DEFAULT_DAY_START, DEFAULT_DAY_TIME
 from .fullcharge import (
     ACTION_NOW,
     ACTION_SUN,
@@ -131,6 +143,7 @@ from .planner import (
     MODE_GRID_CHARGE,
     MODE_OFF,
     MODE_SMART,
+    MODE_SMART_CHARGE,
     PLAN_CHARGE,
     PLAN_IDLE,
     PLAN_MISSING_DATA,
@@ -194,10 +207,29 @@ class Orchestrator:
         # Appris
         self.efficiency: float = float(self.cfg[CONF_EFFICIENCY]) / 100
         self.measured_efficiency: float | None = None
+        # C0 (v1.4.0) : rendements de charge et de décharge côté prise, valeur brute, base
+        self.eta_charge: float | None = None
+        self.eta_discharge: float | None = None
+        self.measured_raw: float | None = None
+        self.efficiency_basis = "none"
         self.solar_factor = 1.0
         self.solar_history: dict[str, float] = {}
         # Suivi
         self.monthly_savings = 0.0
+        # v1.4.0 : coût réel de la recharge (C1), coût de l'énergie en stock (C2), usure (C4)
+        self.charge_cost = ChargeCost()
+        self.stock_cost = StockCost()
+        self.provenance: dict[str, list[str]] = {}
+        self.provenance_ok = False
+        self.provenance_listener: Callable[[], None] | None = None
+        self.wear_entities: list[str] = []
+        self.wear_value = 0.0
+        self.wear_source = "manual"
+        self.resale_price: float | None = None
+        self._catching_up = False
+        # v1.4.0 (ex-1.3.7, A2) : début de la journée du plan, pour les cartes
+        self.day_start = DEFAULT_DAY_START
+        self.day_start_time = DEFAULT_DAY_TIME
         self._savings_month = ""
         self._last_tick: datetime | None = None
         self.override: dict[str, Any] | None = None
@@ -330,11 +362,21 @@ class Orchestrator:
             self.reserve_soc = float(data["reserve_soc"])
         self.keeper = SocKeeper(data.get("keeper"))
         self.keeper.reserve_setting = self.reserve_soc
-        self.measured_efficiency = data.get("measured_efficiency")
+        stored_eff = data.get("measured_efficiency")
+        # v1.3.6 mesurait dans le pack (98 %) : une valeur hors bornes n'est pas reprise (C0)
+        self.measured_efficiency = stored_eff if within_efficiency_bounds(stored_eff) else None
         self.solar_factor = float(data.get("solar_factor", 1.0))
         self.solar_history = dict(data.get("solar_history", {}))
         self.monthly_savings = float(data.get("monthly_savings", 0.0))
         self._savings_month = data.get("savings_month", "")
+        self.charge_cost = ChargeCost.load(data.get("charge_cost"))
+        self.stock_cost = StockCost.load(data.get("stock_cost"))
+        if data.get("day_start") in DAY_STARTS:
+            self.day_start = data["day_start"]
+        try:
+            self.day_start_time = time.fromisoformat(data.get("day_start_time") or "")
+        except ValueError:
+            self.day_start_time = DEFAULT_DAY_TIME
         self._notified = dict(data.get("notified", {}))
         self._watch = data.get("watch")
         self._charging_night = data.get("charging_night")
@@ -366,6 +408,10 @@ class Orchestrator:
             "solar_history": self.solar_history,
             "monthly_savings": round(self.monthly_savings, 4),
             "savings_month": self._savings_month,
+            "charge_cost": self.charge_cost.dump(),
+            "stock_cost": self.stock_cost.dump(),
+            "day_start": self.day_start,
+            "day_start_time": self.day_start_time.strftime("%H:%M"),
             "notified": self._notified,
             "watch": self._watch,
             "charging_night": self._charging_night,
@@ -380,6 +426,17 @@ class Orchestrator:
         self._store.async_delay_save(self._dump, 30)
 
     # ------------------------------------------------------------ réglages à chaud
+    async def async_set_day_start(self, choice: str) -> None:
+        """A2 : début de la journée du plan ; les cases suivent sans recalculer le plan."""
+        if choice in DAY_STARTS:
+            self.day_start = choice
+            self._save()
+            self._notify_listeners()
+
+    async def async_set_day_start_time(self, value: time) -> None:
+        self.day_start_time = value.replace(second=0, microsecond=0)
+        self._save()
+        self._notify_listeners()
     async def async_set_auto_control(self, on: bool) -> None:
         """Interrupteur général : coupé, tout s'arrête ; rallumé, les choix de N6 reviennent."""
         self.auto_control = on
@@ -575,7 +632,7 @@ class Orchestrator:
             src.find_entities(
                 self.hass,
                 TARIFF_DOMAIN,
-                TARIFF_KEYS + TARIFF_CARD_KEYS,
+                TARIFF_KEYS + TARIFF_CARD_KEYS + TARIFF_OPTIONAL_KEYS,
                 config_entry_id=self.cfg.get(CONF_TARIFF_ENTRY),
             )
             if self.cfg.get(CONF_TARIFF_ENTRY)
@@ -619,6 +676,12 @@ class Orchestrator:
             self.hass, BATTERY_DOMAIN, CEILING_KEYS, device_id=self.cfg[CONF_BATTERY_DEVICE]
         )
         self.ceilings_ok = all(k in self.ceiling_entities for k in CEILING_KEYS)
+        # v1.4.0 : provenance (Zendure ≥ 1.7.0) et usure de la Rentabilité solaire, facultatives
+        self.provenance = src.provenance_entities(self.hass, self.cfg[CONF_BATTERY_DEVICE], self.units)
+        self.provenance_ok = all(self.provenance.get(k) for k in PROVENANCE_REQUIRED)
+        if self.provenance_listener:
+            self.provenance_listener()
+        self.wear_entities = src.platform_entities(self.hass, PAYBACK_DOMAIN, PAYBACK_WEAR_KEY)
         # N5 : routeurs déclarés
         self.router_entities = {
             r["device_id"]: src.find_entities(self.hass, ROUTER_DOMAIN, ROUTER_KEYS, device_id=r["device_id"])
@@ -799,10 +862,13 @@ class Orchestrator:
             self._last_solar_ok = now
         stale = self._last_solar_ok is None or now - self._last_solar_ok > timedelta(hours=24)
         self._issue("no_solar_forecast", stale, "no_solar_forecast")
+        p1_wanted = bool(self.cfg.get(CONF_NIGHT_ON_BATTERY, DEFAULTS[CONF_NIGHT_ON_BATTERY]))
         if stale:
             # Sans prévision solaire, pas de charge en heures creuses (E3, états dégradés)
             self.missing.append("solar_forecast")
-            return Plan(PLAN_MISSING_DATA, REASON_MISSING_DATA)
+            plan = Plan(PLAN_MISSING_DATA, REASON_MISSING_DATA)
+            plan.night_on_battery = "unavailable" if p1_wanted else "off"
+            return plan
         factor = self.solar_factor if self.cfg[CONF_SOLAR_CORRECTION] else 1.0
         solar = [v * factor for v in spread(periods, starts, STEP)]
         self._remember_solar(periods)
@@ -846,11 +912,15 @@ class Orchestrator:
             st.loads_w = self._loads_w(st.start, now)
         settings = Settings(
             efficiency=self.efficiency_used,
-            wear_eur_kwh=float(self.cfg[CONF_WEAR]),
+            wear_eur_kwh=self._wear(),
             gain_threshold=self.gain_threshold,
             safety_margin=PROFILES.get(self.profile_name, 0.10),
             import_limit_w=self.import_limit,
             finish_advance_min=int(self.cfg[CONF_FINISH_ADVANCE]),
+            # P1 : seulement avec une prévision solaire lue à l'instant (sinon la nuit
+            # reste comme en v1.3.6 et le plan dit « unavailable »)
+            night_on_battery=p1_wanted and read,
+            night_reserve_kwh=float(self.cfg.get(CONF_NIGHT_RESERVE, DEFAULTS[CONF_NIGHT_RESERVE])),
         )
         override = None
         if self.override:
@@ -870,6 +940,8 @@ class Orchestrator:
             plan = self._plan_with_soc_rules(steps, battery, settings, override)
         if plan.state == PLAN_MISSING_DATA and not self.missing:
             self.missing.append("off_peak_price")
+        if p1_wanted and (not read or plan.state == PLAN_MISSING_DATA):
+            plan.night_on_battery = "unavailable"
         if not self.auto_control:
             plan.state = PLAN_SUSPENDED
         return plan
@@ -1067,19 +1139,37 @@ class Orchestrator:
             [(ts, max(0.0, v)) for ts, v in hourly.items()], weeks=weeks
         )
 
-        # Rendement aller-retour sur 30 jours
+        # Rendement aller-retour sur 30 jours, mesuré côté prise (C0, v1.4.0)
         e_start = end - timedelta(days=EFFICIENCY_DAYS)
-        ec = await src.async_hourly_sums(
-            hass, counters["energy_charged"] + counters["energy_discharged"], e_start, end
-        )
+        all_ids = [sid for k in ENERGY_COUNTER_KEYS for sid in counters.get(k) or []]
+        ec = await src.async_hourly_sums(hass, all_ids, e_start, end)
 
-        def total(sids):
-            return sum(sum(v for _t, v in hourly_changes(ec.get(s, []))) for s in sids)
+        def by_hour(key: str) -> dict[datetime, float]:
+            out: dict[datetime, float] = defaultdict(float)
+            for sid in counters.get(key) or []:
+                for ts, v in hourly_changes(ec.get(sid, [])):
+                    out[ts] += v
+            return out
 
-        measured = measured_efficiency(
-            total(counters["energy_charged"]), total(counters["energy_discharged"]), 0.0
-        )
-        self.measured_efficiency = measured or None
+        charged, discharged = by_hour("energy_charged"), by_hour("energy_discharged")
+        if counters.get("energy_grid_input") and counters.get("energy_output_home"):
+            measured, self.eta_charge, self.eta_discharge = ac_efficiency(
+                by_hour("energy_grid_input"), charged, discharged, by_hour("energy_output_home")
+            )
+            self.efficiency_basis = "ac"
+        else:  # compteurs côté prise absents : mesure dans le pack, comme en v1.3.6
+            measured = measured_efficiency(sum(charged.values()), sum(discharged.values()), 0.0) or None
+            self.eta_charge = self.eta_discharge = None
+            self.efficiency_basis = "pack"
+        self.measured_raw = measured
+        if measured is not None and not within_efficiency_bounds(measured):
+            _LOGGER.warning(
+                "Rendement mesuré de %.0f %% hors des bornes 60-95 %% : rendement saisi (%.0f %%) gardé",
+                measured * 100,
+                self.efficiency * 100,
+            )
+            measured = None
+        self.measured_efficiency = measured
 
         # Facteur de correction solaire sur 14 jours
         actual_ids = self._solar_actual_ids
@@ -1100,7 +1190,7 @@ class Orchestrator:
 
     # ------------------------------------------------------------ pilotage
     async def _control_tick(self, _now=None) -> None:
-        self._accumulate_savings()
+        await self._async_accumulate_savings()
         await self._async_check_end_of_window()
         if self._observe_full_charge(dt_util.now()):
             await self.async_update_plan()
@@ -1159,6 +1249,12 @@ class Orchestrator:
             return
         if mode == MODE_OFF and self.calibrating_units:
             mode = MODE_SMART  # pas de batterie à l'arrêt pendant une calibration
+        elif mode == MODE_SMART:
+            # P1 : nuit sur batterie, arrêt dès que le niveau atteint le plancher du pas en cours
+            floor = plan.floor_at(now)
+            soc = src.state_float(self.hass, self.battery_entities.get("electric_level"))
+            if floor is not None and soc is not None and soc <= floor:
+                mode = MODE_SMART_CHARGE  # ne décharge plus, stocke encore un éventuel surplus
         night = plan.window_end.isoformat() if plan.window_end else None
         if mode == MODE_GRID_CHARGE:
             self._charging_night = night
@@ -1753,27 +1849,144 @@ class Orchestrator:
             "number", "set_value", {"entity_id": entity_id, "value": value}, blocking=True
         )
 
-    def _accumulate_savings(self) -> None:
-        """Économies du mois : énergie rendue × prix du moment, moins la charge réseau."""
+    def _wear(self) -> float:
+        """C4 : usure par kWh restitué, lue dans la Rentabilité solaire si elle est là."""
+        manual = float(self.cfg[CONF_WEAR])
+        if self.cfg.get(CONF_WEAR_SOURCE, DEFAULTS[CONF_WEAR_SOURCE]) == "solar_payback":
+            values = []
+            for eid in self.wear_entities:
+                st = self.hass.states.get(eid)
+                cap = None
+                if st is not None:
+                    try:
+                        cap = float(st.attributes.get("usable_capacity"))
+                    except (TypeError, ValueError):
+                        cap = None
+                values.append((src.state_float(self.hass, eid), cap))
+            wear = weighted_wear(values)
+            if wear is not None:
+                self.wear_value, self.wear_source = wear, "solar_payback"
+                return wear
+        self.wear_value, self.wear_source = manual, "manual"
+        return manual
+
+    def _off_peak_price(self) -> float | None:
+        """Prix moyen des heures creuses de la prochaine nuit, d'après le plan (C2)."""
+        plan = self.plan
+        if plan is None or plan.window_start is None or plan.window_end is None:
+            return None
+        prices = [
+            sp.price
+            for sp in plan.steps
+            if plan.window_start <= sp.start < plan.window_end and sp.price is not None
+        ]
+        return sum(prices) / len(prices) if prices else None
+
+    async def _async_accumulate_savings(self) -> None:
+        """Économies du mois : énergie rendue × prix du moment, moins le coût de la recharge.
+
+        Avec les capteurs de provenance de Zendure ≥ 1.7.0 (C1) : le coût de recharge est
+        l'énergie réseau réellement chargée × le prix de chaque minute, plus le solaire
+        stocké × le prix de revente. Sans eux, la formule de la v1.3.6 reste.
+        """
         now = dt_util.now()
         month = now.strftime("%Y-%m")
         if month != self._savings_month:
             self._savings_month, self.monthly_savings = month, 0.0
         last, self._last_tick = self._last_tick, now
+        price = src.state_float(self.hass, self.tariff_entities.get("prix_actuel"))
+        self.resale_price = src.state_float(self.hass, self.tariff_entities.get("prix_revente"))
+        changed = False
+        if self.provenance_ok and not self._catching_up:
+            changed = await self._async_track_charge_cost(now, price)
         if last is None:
+            if changed:
+                self._save()
             return
         hours = min((now - last).total_seconds(), 300) / 3600
         power = src.state_float(self.hass, self.battery_entities.get("battery_power"))
-        price = src.state_float(self.hass, self.tariff_entities.get("prix_actuel"))
         if power is None or price is None:
+            if changed:
+                self._save()
+                self._notify_listeners()
             return
-        mode = src.state_str(self.hass, self.battery_entities.get("operating_mode"))
         if power < 0:
             self.monthly_savings += -power / 1000 * hours * price
-        elif power > 0 and mode == MODE_GRID_CHARGE:
-            self.monthly_savings -= power / 1000 * hours * price
+        elif power > 0 and not self.provenance_ok:
+            mode = src.state_str(self.hass, self.battery_entities.get("operating_mode"))
+            if mode == MODE_GRID_CHARGE:
+                self.monthly_savings -= power / 1000 * hours * price
         self._save()
         self._notify_listeners()
+
+    async def _async_track_charge_cost(self, now: datetime, price: float | None) -> bool:
+        """C1 et C2 : coût de la recharge du mois et coût de l'énergie en stock."""
+        prov = self.provenance
+        grid = src.sum_states(self.hass, prov.get("energy_charged_grid"))
+        solar = src.sum_states(self.hass, prov.get("energy_charged_solar"))
+        cc = self.charge_cost
+        before = cc.last_time
+        d_grid, d_solar = cc.deltas(grid, solar)
+        resale = self.resale_price
+        use_price = price
+        gap = (now - before).total_seconds() if before else 0
+        if d_grid > 1e-6 and gap > 300:
+            # Coupure (redémarrage, Home Assistant arrêté) : rattrapage par tranches de 5 min
+            self._catching_up = True
+            try:
+                cost = await self._async_catch_up_cost(before, now, d_grid, price)
+            finally:
+                self._catching_up = False
+            if cost is not None:
+                use_price = cost / d_grid
+        g_cost, s_cost = cc.add(now, d_grid, d_solar, use_price, resale)
+        self.monthly_savings -= g_cost + s_cost
+        # C2 : le coût suit les stocks de Zendure
+        s_grid = src.sum_states(self.hass, prov.get("stored_energy_grid"))
+        s_solar = src.sum_states(self.hass, prov.get("stored_energy_solar"))
+        if s_grid is not None and s_solar is not None:
+            sc = self.stock_cost
+            if not sc.started:
+                sc.start(s_grid, s_solar, self._off_peak_price(), resale)
+            else:
+                sc.update(s_grid, s_solar, g_cost, s_cost)
+            shares = []
+            for eid in prov.get("stored_energy_grid") or []:
+                st = self.hass.states.get(eid)
+                v = st.attributes.get("initial_share") if st else None
+                if isinstance(v, (int, float)):
+                    shares.append(float(v))
+            sc.initial_share = max(shares) / 100 if shares else 0.0
+        return bool(d_grid or d_solar or g_cost)
+
+    async def _async_catch_up_cost(
+        self, start: datetime, end: datetime, kwh: float, price_now: float | None
+    ) -> float | None:
+        """Coût de l'énergie chargée pendant une coupure, tranche de 5 minutes par tranche.
+
+        Statistiques à 5 minutes du compteur réseau et historique de l'état de `prix_actuel`.
+        Au-delà de leur conservation, le prix de la reprise est pris et le journal le dit.
+        """
+        ids = self.provenance.get("energy_charged_grid") or []
+        sums = await src.async_hourly_sums(self.hass, ids, start, end, period="5minute")
+        slices: dict[datetime, float] = defaultdict(float)
+        for pts in sums.values():
+            for ts, v in hourly_changes(pts):
+                slices[ts] += max(0.0, v)
+        prices = await src.async_state_history(
+            self.hass, self.tariff_entities.get("prix_actuel"), start, end
+        )
+        seen = sum(slices.values())
+        cost, unpriced = value_slices(list(slices.items()), prices, price_now)
+        rest = max(0.0, kwh - seen)  # énergie hors des statistiques (trop ancienne, ou pas encore agrégée)
+        if rest > 0.01 or unpriced > 0.01:
+            if price_now is None:
+                return None if seen < 0.01 else (cost / seen) * kwh
+            _LOGGER.info(
+                "Coût de recharge : %.2f kWh valorisés au prix de la reprise (historique indisponible)",
+                rest + unpriced,
+            )
+        return cost + rest * (price_now or 0.0)
 
     # ------------------------------------------------------------ notifications
     async def _async_after_plan(self) -> None:

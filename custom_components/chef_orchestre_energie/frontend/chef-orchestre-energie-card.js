@@ -13,7 +13,7 @@
  *   gauge_warn: 80         # % de la puissance souscrite : jauge orange
  *   gauge_crit: 95         # jauge rouge
  */
-const ENERGY_CARD_VERSION = "1.3.6";
+const ENERGY_CARD_VERSION = "1.4.0";
 const CHEF = "chef_orchestre_energie";
 const TARIFF = "tarifs_electricite";
 const ZENDURE = "zendure_local";
@@ -54,6 +54,9 @@ const ENERGY_I18N = {
       resting: "Au repos",
       mode: "Mode",
       piloted: "Piloté par le Chef d'orchestre",
+      stock: (p, c) => `Stock : ${p} % solaire · énergie en stock à ${c} €/kWh`,
+      estimated: "estimé",
+      chargeCost: "Coût de recharge du mois",
       manual: "Réglé dans la carte Zendure",
       min: "min",
       max: "max",
@@ -106,6 +109,8 @@ const ENERGY_I18N = {
       gain: "Économie nette sur chaque kWh acheté en heures creuses, stocké dans la batterie puis rendu à l'heure pleine la plus chère de demain, comparée à l'achat de ce kWh en heures pleines. Le prix payé la nuit et les pertes de la batterie sont déjà déduits. La batterie ne charge la nuit que si ce gain atteint le seuil de rentabilité, et seulement s'il manque de l'énergie pour couvrir les heures pleines.",
       minsoc: "SOC minimum en vigueur sur les batteries. En heures pleines, c'est toujours votre propre réglage : les batteries peuvent descendre jusque-là. Quand la recharge de la nuit n'est pas rentable, le Chef d'orchestre pose la réserve (50 % par défaut) pendant ses heures creuses seulement, pour ne pas dépenser l'énergie des batteries quand le réseau est bon marché ; il la lève à la fin des heures creuses. Une batterie déjà sous la réserve garde son niveau, sans charger sur le réseau. Votre réglage revient aussi dès que le pilotage est coupé.",
       margin: "Puissance que la maison peut encore appeler avant d'atteindre la puissance souscrite de votre contrat. La jauge passe à l'orange puis au rouge quand on s'en approche (80 % et 95 % par défaut). La charge des batteries ralentit d'elle-même pour garder au moins 10 % de marge.",
+      stock: "Ce qu'a coûté l'énergie qui est dans la batterie : le réseau au prix payé, le solaire au prix de revente. C'est une information : la décision de décharger regarde les prix à venir, pas ce qui est déjà payé.",
+      chargecost: "L'énergie prise au réseau pour charger les batteries ce mois-ci, chaque minute à son prix.",
       full: "D'après le support Zendure, les batteries peuvent lancer une calibration automatique après environ 30 jours sans charge à 100 %. Une charge complète une à deux fois par mois suffit en général à l'éviter : le Chef d'orchestre la programme un jour de soleil ou une nuit d'heures creuses bon marché. Aucune décharge complète n'est provoquée, elle userait la batterie.",
     },
     full: {
@@ -191,6 +196,9 @@ const ENERGY_I18N = {
       resting: "Idle",
       mode: "Mode",
       piloted: "Driven by the Conductor",
+      stock: (p, c) => `Stock: ${p} % solar · stored energy at ${c} €/kWh`,
+      estimated: "estimated",
+      chargeCost: "Charge cost this month",
       manual: "Set in the Zendure card",
       min: "min",
       max: "max",
@@ -243,6 +251,8 @@ const ENERGY_I18N = {
       gain: "Net saving on each kWh bought off-peak, stored in the battery and given back at tomorrow's most expensive peak hour, compared with buying that kWh at peak price. The night price and battery losses are already deducted. The battery only charges at night if this gain reaches the profitability threshold, and only if energy is missing to cover the peak hours.",
       minsoc: "Minimum SOC currently in force on the batteries. At peak hours it is always your own setting: the batteries can go down to it. When the night charge is not profitable, the conductor sets the reserve (50 % by default) during its off-peak hours only, so battery energy is not spent while the grid is cheap; it lifts it when the off-peak hours end. A battery already below the reserve keeps its level, without charging from the grid. Your setting also comes back as soon as control is turned off.",
       margin: "Power the home can still draw before reaching the subscribed power of your contract. The gauge turns orange then red as it gets close (80 % and 95 % by default). Battery charging slows down by itself to keep at least a 10 % margin.",
+      stock: "What the energy in the battery cost: grid energy at the price paid, solar at the resale price. It is information only: the decision to discharge looks at future prices, not at what is already paid.",
+      chargecost: "The energy taken from the grid to charge the batteries this month, each minute at its own price.",
       full: "According to Zendure support, the batteries may start an automatic calibration after about 30 days without a 100 % charge. A full charge once or twice a month usually avoids it: the conductor schedules it on a sunny day or a cheap off-peak night. No full discharge is forced, as it would wear the battery.",
     },
     full: {
@@ -603,8 +613,27 @@ class ChefOrchestreEnergieCard extends HTMLElement {
           <div class="note ${piloted ? "piloted" : ""}"><ha-icon icon="${piloted ? "mdi:robot-outline" : "mdi:hand-back-right-outline"}"></ha-icon>${eEsc(piloted ? t.piloted : t.manual)}</div>
         </div>
       </div>
+      ${this._costLines(ents, watched)}
       ${rows.length ? `<div class="units">${rows.join("")}</div>` : ""}`;
     return this._section("mdi:home-battery", t.title, body, this._action("zendure", "mdi:open-in-new", t.open), toggle);
+  }
+
+  /* ---- Coût de l'énergie en stock et coût de recharge du mois (v1.4.0, C1/C2) */
+  _costLines(ents, watched) {
+    const t = this._t.bat;
+    const stock = this._state(ents.chef.stock_energy_cost);
+    const cost = this._state(ents.chef.charge_cost_month);
+    watched.push(ents.chef.stock_energy_cost, ents.chef.charge_cost_month);
+    const out = [];
+    if (this._ok(stock) && stock.attributes.solar_share != null) {
+      const txt = t.stock(this._n(stock.attributes.solar_share, 0), this._n(stock.state, 2)) + (stock.attributes.estimated ? ` (${t.estimated})` : "");
+      out.push(`<div class="row"><span>${eEsc(txt)}${this._info("stock")}</span></div>${this._bubble("stock", this._t.info.stock)}`);
+    }
+    if (this._ok(cost)) {
+      const money = new Intl.NumberFormat(this._hass.locale?.language || "fr", { style: "currency", currency: "EUR" }).format(eNum(cost.state));
+      out.push(`<div class="row"><span>${eEsc(t.chargeCost)}${this._info("chargecost")}</span><b>${eEsc(money)}</b></div>${this._bubble("chargecost", this._t.info.chargecost)}`);
+    }
+    return out.length ? `<div class="rows costs">${out.join("")}</div>` : "";
   }
 
   /* ---- Routeurs solaires F1ATB (N5, N6) */
@@ -661,6 +690,7 @@ class ChefOrchestreEnergieCard extends HTMLElement {
     const keys = ["energy_to_charge", "forecast_solar", "forecast_consumption", "charge_start"];
     keys.forEach((k) => watched.push(ents.chef[k]));
     const val = (k) => this._state(ents.chef[k]);
+    const tomorrow = Array.isArray(pa.days) && pa.days[1] && !pa.days[1].empty ? pa.days[1] : null;
     let verdict = plan?.state;
     if (!on) verdict = "suspended";
     else if (verdict === "missing_data" && (pa.missing || []).includes("solar_forecast")) verdict = "no_solar";
@@ -680,8 +710,9 @@ class ChefOrchestreEnergieCard extends HTMLElement {
     const rUntil = this._time(pa.reserve_until);
     const reserveTxt = pa.reserve_soc != null && rFrom && rUntil ? t.reserveSpan(this._n(pa.reserve_soc, 0), rFrom, rUntil) : "";
     const rows = [
-      [t.solar, this._kwh(val("forecast_solar")?.state)],
-      [t.consumption, this._kwh(val("forecast_consumption")?.state)],
+      // v1.4.0 (ex-1.3.7) : même découpage de journée que la carte Chef d'orchestre (day_start)
+      [t.solar, tomorrow ? this._kwh(tomorrow.solar_kwh) : this._kwh(val("forecast_solar")?.state)],
+      [t.consumption, tomorrow ? this._kwh(tomorrow.consumption_kwh) : this._kwh(val("forecast_consumption")?.state)],
       [t.toCharge, paused ? "—" : this._kwh(val("energy_to_charge")?.state)],
       [t.gap, gapTxt, gap !== null && thr !== null && pa.tariff_ok !== false ? (gap >= thr ? "good" : "bad") : "", "gain"],
       [t.slot, slot],
@@ -903,6 +934,7 @@ b.good{color:var(--success-color,#43a047)} b.bad,b.crit{color:var(--error-color,
 .chip.tempo-blanc{background:color-mix(in srgb,var(--secondary-text-color) 18%,transparent)}
 .chip.tempo-rouge{background:color-mix(in srgb,#e53935 28%,transparent)}
 .bat{display:flex;gap:14px;align-items:center}
+.rows.costs{margin-top:10px;font-size:.92em}
 .ring{width:84px;height:84px;flex:none}
 .ring circle{fill:none;stroke-width:8;stroke-linecap:round}
 .ring .track{stroke:color-mix(in srgb,var(--secondary-text-color) 20%,transparent)}

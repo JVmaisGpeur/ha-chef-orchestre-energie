@@ -14,7 +14,14 @@ from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
 from .consumption import energy_dashboard_stats, energy_factor  # noqa: F401
-from .const import BATTERY_DOMAIN, ENERGY_COUNTER_KEYS, SOLAR_DOMAINS, TARIFF_DOMAIN
+from .const import (
+    BATTERY_DOMAIN,
+    ENERGY_COUNTER_KEYS,
+    PROVENANCE_KEYS,
+    PROVENANCE_REQUIRED,
+    SOLAR_DOMAINS,
+    TARIFF_DOMAIN,
+)
 from .timeline import wh_hours_to_periods
 
 _LOGGER = logging.getLogger(__name__)
@@ -90,9 +97,47 @@ def counters_for_device(hass: HomeAssistant, device_id: str) -> dict[str, list[s
     toutes les batteries Zendure.
     """
     own = find_entities(hass, BATTERY_DOMAIN, ENERGY_COUNTER_KEYS, device_id=device_id)
-    if len(own) == len(ENERGY_COUNTER_KEYS):
-        return {k: [v] for k, v in own.items()}
+    if "energy_charged" in own and "energy_discharged" in own:
+        return {k: [own[k]] if k in own else [] for k in ENERGY_COUNTER_KEYS}
     return battery_energy_counters(hass)
+
+
+def provenance_entities(hass: HomeAssistant, device_id: str, units: list[str]) -> dict[str, list[str]]:
+    """Capteurs de provenance de Zendure ≥ 1.7.0 (v1.4.0, C1/C2) : ceux du groupe, sinon
+    ceux de chaque batterie membre (additionnés). Facultatifs : jamais de réparation."""
+    own = find_entities(hass, BATTERY_DOMAIN, PROVENANCE_KEYS, device_id=device_id)
+    if all(k in own for k in PROVENANCE_REQUIRED):
+        return {k: [v] for k, v in own.items()}
+    out: dict[str, list[str]] = {k: [] for k in PROVENANCE_KEYS}
+    for dev in units:
+        if dev == device_id:
+            continue
+        for k, v in find_entities(hass, BATTERY_DOMAIN, PROVENANCE_KEYS, device_id=dev).items():
+            out[k].append(v)
+    return out
+
+
+def platform_entities(hass: HomeAssistant, platform: str, key: str) -> list[str]:
+    """Toutes les entités actives d'une intégration ayant cette translation_key."""
+    reg = er.async_get(hass)
+    return [
+        e.entity_id
+        for e in reg.entities.values()
+        if e.platform == platform and e.translation_key == key and e.disabled_by is None
+    ]
+
+
+def sum_states(hass: HomeAssistant, entity_ids: list[str] | None) -> float | None:
+    """Somme des états ; None si l'un manque (une somme partielle fausserait les écarts)."""
+    if not entity_ids:
+        return None
+    total = 0.0
+    for eid in entity_ids:
+        v = state_float(hass, eid)
+        if v is None:
+            return None
+        total += v
+    return total
 
 
 def state_float(hass: HomeAssistant, entity_id: str | None) -> float | None:
@@ -187,9 +232,11 @@ async def async_solar_periods(
 
 
 async def async_hourly_sums(
-    hass: HomeAssistant, statistic_ids: list[str], start: datetime, end: datetime
+    hass: HomeAssistant, statistic_ids: list[str], start: datetime, end: datetime, period: str = "hour"
 ) -> dict[str, list[tuple[datetime, float]]]:
-    """Totaux cumulés horaires (statistiques long terme) : {id: [(début d'heure, somme)]}."""
+    """Totaux cumulés horaires (statistiques long terme) : {id: [(début d'heure, somme)]}.
+
+    `period` = "5minute" pour les statistiques à 5 minutes (rattrapage du coût, C1)."""
     ids = [i for i in statistic_ids if i]
     if not ids:
         return {}
@@ -204,7 +251,7 @@ async def async_hourly_sums(
     recorder = get_instance(hass)
     try:
         stats = await recorder.async_add_executor_job(
-            statistics_during_period, hass, start, end, set(ids), "hour", None, {"sum"}
+            statistics_during_period, hass, start, end, set(ids), period, None, {"sum"}
         )
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Lecture des statistiques impossible : %s", err)
@@ -342,3 +389,34 @@ async def async_last_full_charge(
         except (TypeError, ValueError):
             continue
     return last
+
+
+async def async_state_history(
+    hass: HomeAssistant, entity_id: str | None, start: datetime, end: datetime
+) -> list[tuple[datetime, float | None]]:
+    """Historique de l'état d'une entité (le prix du moment de Tarifs) : [(depuis, valeur)].
+
+    Le premier élément donne l'état en vigueur au début de la période."""
+    if not entity_id:
+        return []
+    try:
+        from homeassistant.components.recorder import get_instance, history
+    except ImportError:  # pragma: no cover - recorder absent
+        return []
+    try:
+        states = await get_instance(hass).async_add_executor_job(
+            lambda: history.state_changes_during_period(
+                hass, start, end, entity_id, include_start_time_state=True
+            )
+        )
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Historique de %s illisible : %s", entity_id, err)
+        return []
+    out: list[tuple[datetime, float | None]] = []
+    for st in states.get(entity_id, []):
+        try:
+            v: float | None = float(st.state)
+        except (TypeError, ValueError):
+            v = None
+        out.append((max(st.last_changed, start), v))
+    return out

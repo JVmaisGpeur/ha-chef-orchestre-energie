@@ -113,6 +113,9 @@ class Settings:
     safety_margin: float = 0.10  # majoration du besoin des heures rentables
     import_limit_w: float = 9000.0  # soutirage maximal pendant la charge
     finish_advance_min: int = 30  # la charge doit finir avant la fin des HC
+    # P1 (v1.4.0) : nuit sur batterie quand le soleil de demain suffit
+    night_on_battery: bool = False
+    night_reserve_kwh: float = 2.0  # réserve en plus du besoin des prochaines heures pleines
 
 
 @dataclass
@@ -136,6 +139,7 @@ class StepPlan:
     profitable: bool = False
     off_peak: bool = False
     overflow_kwh: float = 0.0  # surplus solaire qui ne rentre plus (batterie pleine)
+    floor_soc: float | None = None  # P1 : plancher de la nuit sur batterie sur ce pas (SOC %)
 
 
 @dataclass
@@ -163,13 +167,28 @@ class Plan:
     may_not_finish: bool = False
     power_alert: bool = False
     capacity_short: bool = False
+    # P1 : off (désactivée ou nuit avec charge), active (la batterie alimente la maison
+    # en heures creuses), kept (gardée pour les prochaines heures pleines)
+    night_on_battery: str = "off"
+    night_floor_soc: float | None = None  # plancher au début des prochaines heures creuses
+    next_peak_need_kwh: float | None = None  # besoin des prochaines heures pleines (côté batterie)
+    next_peak_overflow_kwh: float | None = None  # surplus solaire qui ne rentrera pas dans la batterie
     steps: list[StepPlan] = field(default_factory=list)
 
-    def mode_at(self, when: datetime) -> str | None:
+    def step_at(self, when: datetime) -> StepPlan | None:
         for sp in self.steps:
             if sp.start <= when < sp.start + _step_len(self.steps):
-                return sp.mode
+                return sp
         return None
+
+    def mode_at(self, when: datetime) -> str | None:
+        sp = self.step_at(when)
+        return sp.mode if sp else None
+
+    def floor_at(self, when: datetime) -> float | None:
+        """P1 : plancher de la nuit sur batterie en vigueur à cet instant (SOC %), ou None."""
+        sp = self.step_at(when)
+        return sp.floor_soc if sp and sp.mode == MODE_SMART else None
 
 
 def _step_len(steps) -> timedelta:
@@ -198,6 +217,56 @@ def cover_range(steps: list[Step], window_end: int) -> tuple[int, int]:
     while k < len(steps) and not steps[k].off_peak:
         k += 1
     return window_end, k
+
+
+def peak_need(steps: list[Step], start: int, s: Settings, e_range: float) -> float | None:
+    """P1 : énergie (côté batterie) qu'il faut au début des heures pleines qui commencent
+    à `start` pour ne rien acheter avant les heures creuses suivantes, compte tenu du
+    soleil prévu qui recharge la batterie entre-temps. None si aucune heure pleine."""
+    if start >= len(steps) or steps[start].off_peak:
+        return None
+    eta = math.sqrt(min(max(s.efficiency, 0.3), 1.0))
+    cumul = need = 0.0
+    k = start
+    while k < len(steps) and not steps[k].off_peak:
+        net = steps[k].consumption_kwh - steps[k].solar_kwh
+        cumul += net / eta if net > 0 else net * eta
+        cumul = max(cumul, -e_range)  # la batterie ne stocke pas plus que sa capacité
+        need = max(need, cumul)
+        k += 1
+    return need
+
+
+def night_floors(steps: list[Step], s: Settings, e_range: float) -> list[float | None]:
+    """P1 (v1.4.0) : plancher de la nuit sur batterie pour chaque pas en heures creuses.
+
+    Énergie (kWh au-dessus du SOC min) à garder à ce pas : le besoin des prochaines
+    heures pleines (+ marge de prudence + réserve), moins le surplus solaire prévu d'ici
+    là, qui rechargera la batterie (un samedi matin, le soleil du week-end compte).
+    Recalculé à chaque pas : nuit, week-end entier ou jour férié. Si les prévisions
+    s'arrêtent avant les prochaines heures pleines (vendredi soir, avant un long week-end
+    en heures creuses), seule la réserve est gardée, moins le soleil prévu d'ici là.
+    None : pas un pas d'heures creuses.
+    """
+    eta = math.sqrt(min(max(s.efficiency, 0.3), 1.0))
+    floors: list[float | None] = [None] * len(steps)
+    for k, st in enumerate(steps):
+        if not st.off_peak:
+            continue
+        p = k + 1
+        while p < len(steps) and steps[p].off_peak:
+            p += 1
+        need = peak_need(steps, p, s, e_range)
+        if need is None:  # heures pleines au-delà des prévisions : la réserve seule
+            keep = s.night_reserve_kwh
+        else:
+            keep = need * (1 + s.safety_margin) + s.night_reserve_kwh if need > 0 else 0.0
+        for j in range(p - 1, k, -1):  # le soleil d'ici là recharge la batterie
+            net = steps[j].consumption_kwh - steps[j].solar_kwh
+            if net < 0:
+                keep = max(0.0, keep + net * eta)
+        floors[k] = min(keep, e_range)
+    return floors
 
 
 def charge_cost(price_hc: float, s: Settings) -> float:
@@ -371,7 +440,18 @@ def compute_plan(
         for k in range(ws, we)
     )
     reserve = plan.state == PLAN_CHARGE or plan.capacity_short
-    plan.steps = _build_steps(plan, steps, worth, reserve, (cs, ce), ws, we, b, s, step_h)
+    # P1 : nuit sur batterie, seulement sans charge réseau prévue et sans consigne imposée
+    floors = None
+    if s.night_on_battery and override is None and plan.state != PLAN_CHARGE:
+        floors = night_floors(steps, s, e_range)
+        plan.next_peak_need_kwh = peak_need(steps, cs, s, e_range)
+        if floors[ws] is not None:
+            plan.night_floor_soc = round(b.soc_min + floors[ws] / b.capacity_kwh * 100, 1)
+    plan.steps = _build_steps(plan, steps, worth, reserve, (cs, ce), ws, we, b, s, step_h, floors)
+    if floors is not None:
+        active = any(sp.mode == MODE_SMART and sp.floor_soc is not None for sp in plan.steps)
+        plan.night_on_battery = "active" if active else "kept"
+        plan.next_peak_overflow_kwh = round(sum(sp.overflow_kwh for sp in plan.steps[cs:ce]), 2)
     plan.forecast_gain_eur = _forecast_gain(plan, price_hc, s)
     return plan
 
@@ -404,7 +484,7 @@ def _schedule_charge(plan: Plan, steps, ws, we, b: Battery, s: Settings, step_h:
     plan.charge_start = steps[k].start
 
 
-def _build_steps(plan, steps, worth, reserve, cover, ws, we, b, s, step_h) -> list[StepPlan]:
+def _build_steps(plan, steps, worth, reserve, cover, ws, we, b, s, step_h, floors=None) -> list[StepPlan]:
     eta = math.sqrt(min(max(s.efficiency, 0.3), 1.0))
     e_range = b.range_kwh
     # Énergie au-dessus du SOC minimum ; négative si la batterie est déjà en dessous
@@ -439,6 +519,15 @@ def _build_steps(plan, steps, worth, reserve, cover, ws, we, b, s, step_h) -> li
             mode = MODE_SMART_CHARGE
         else:
             mode = MODE_SMART
+        # P1 : en heures creuses sans charge, la batterie alimente la maison au-dessus du plancher
+        # (jamais pendant une charge planifiée : ballon, voiture, gros consommateur)
+        floor = (
+            floors[k]
+            if floors is not None and st.off_peak and mode != MODE_GRID_CHARGE and st.loads_w <= 0
+            else None
+        )
+        if floor is not None and e > floor + 1e-6:
+            mode = MODE_SMART
         # SOC simulé
         if charge > 0:
             e = min(e + charge * eta, e_range)
@@ -451,10 +540,14 @@ def _build_steps(plan, steps, worth, reserve, cover, ws, we, b, s, step_h) -> li
             e = min(e + stored, e_range)
         delivered = 0.0
         if net > 0 and mode == MODE_SMART:
-            out_kwh = min(net, b.max_discharge_w / 1000 * step_h, max(0.0, e) * eta)
+            usable = e - floor if floor is not None else e
+            out_kwh = min(net, b.max_discharge_w / 1000 * step_h, max(0.0, usable) * eta)
             e = e - out_kwh / eta
             delivered = out_kwh
         soc = b.soc_min + e / b.capacity_kwh * 100 if b.capacity_kwh else 0.0
+        floor_soc = (
+            round(b.soc_min + floor / b.capacity_kwh * 100, 1) if floor is not None and b.capacity_kwh else None
+        )
         out.append(
             StepPlan(
                 start=st.start,
@@ -468,6 +561,7 @@ def _build_steps(plan, steps, worth, reserve, cover, ws, we, b, s, step_h) -> li
                 overflow_kwh=round(overflow, 4),
                 profitable=worth[k],
                 off_peak=st.off_peak,
+                floor_soc=floor_soc,
             )
         )
     return out
@@ -520,6 +614,7 @@ def compute_plan_with_reserve(
     plan = compute_plan(steps, battery, settings, override)
     if (
         reserve_soc is not None
+        and plan.night_on_battery == "off"  # P1 : le plancher calculé remplace la réserve fixe
         and plan.state == PLAN_NOT_PROFITABLE
         and reserve_soc > battery.soc_min
     ):

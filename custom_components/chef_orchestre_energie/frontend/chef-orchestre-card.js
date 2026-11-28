@@ -7,9 +7,12 @@
  *   show_chart: true       # graphique des 48 h à venir
  *   show_modes: true       # frise des modes prévus
  *   show_settings: true    # réglages rapides
+ *   show_days: true        # plan du jour et plan du lendemain (v1.4.0)
  */
-const CARD_VERSION = "1.3.6";
+const CARD_VERSION = "1.4.0";
 const DOMAIN = "chef_orchestre_energie";
+
+const HELP_KEYS = ["plan", "nightActive", "nightKept", "efficiency", "wear", "gain", "savings", "days", "chart", "modes", "settings"];
 
 const I18N = {
   fr: {
@@ -32,7 +35,30 @@ const I18N = {
       off_peak_price: "prix des heures creuses", error: "erreur de calcul (voir les journaux)" },
     modeNames: { off: "Arrêt", grid_charge: "Charge réseau", smart: "Couplage intelligent", smart_charge: "Réserve (stocke le solaire)" },
     profiles: { cautious: "Prudent", balanced: "Équilibré", economical: "Économe" },
-    ed: { name: "Titre", show_chart: "Afficher le graphique des 48 h", show_modes: "Afficher la frise des modes", show_settings: "Afficher les réglages rapides" },
+    ed: { name: "Titre", show_chart: "Afficher le graphique des 48 h", show_modes: "Afficher la frise des modes", show_settings: "Afficher les réglages rapides", show_days: "Afficher le plan du jour et du lendemain" },
+    nightActive: "Cette nuit : la batterie alimente la maison jusqu'à {floor} %, le soleil de demain la remplira",
+    nightKept: "Cette nuit : batterie gardée pour demain (besoin {need} kWh)",
+    nightKeptNoNeed: "Cette nuit : batterie gardée pour demain",
+    nightUnavailable: "Nuit sur batterie indisponible : pas de prévision solaire",
+    efficiency: "Rendement", measuredAc: "mesuré côté prise", typed: "saisi", wear: "Usure", wearPayback: "Rentabilité solaire", wearManual: "saisie",
+    dayToday: "Plan du jour", dayTomorrow: "Plan du lendemain", forecast: "Prévision", tomorrow: "demain",
+    chargeLine: "Charge {kwh} kWh de {from} à {to}", targetSoc: "SOC cible {soc} %", noCharge: "Pas de charge", decidedEve: "Charge décidée la veille au soir",
+    reserveLine: "Réserve {soc} % de {from} à {to}", nightFloor: "Nuit sur batterie jusqu'à {soc} %",
+    socLine: "Batterie : {a} % → mini {b} % → {c} %", energyLine: "Solaire {s} kWh · conso {c} kWh · réseau {g} kWh", cost: "Coût de la charge",
+    truncated: "jusqu'à {t} (fin des prévisions)", dayStart: "Début de journée", dayStarts: { off_peak_end: "Fin des HC", off_peak_start: "Début des HC", midnight: "Minuit", fixed: "Heure fixe" },
+    help: {
+      plan: "Ce que le Chef d'orchestre a décidé pour la prochaine nuit : charger au réseau en heures creuses, ou non, et pourquoi. Touchez le bloc pour le détail.",
+      nightActive: "Demain, le soleil prévu remplira la batterie. Elle peut donc alimenter la maison cette nuit, en gardant de quoi couvrir les heures pleines de demain avant le soleil, avec une marge.",
+      nightKept: "La batterie ne descend pas cette nuit : le soleil de demain ne suffira pas à la remplir, et son énergie vaut plus en heures pleines.",
+      efficiency: "Mesuré côté prise sur 30 jours : ce qui ressort vers la maison pour ce qui est entré du réseau. Sans mesure fiable (hors 60 à 95 %), le rendement saisi est utilisé.",
+      wear: "Le coût d'usure par kWh rendu, lu dans la Rentabilité solaire ou saisi, ajouté au coût d'une recharge.",
+      gain: "Ce que la recharge de cette nuit doit faire économiser demain : l'énergie rendue aux heures pleines, moins son coût en heures creuses, pertes et usure comprises.",
+      savings: "Ce que la batterie a évité d'acheter, moins ce qu'a coûté sa recharge et le surplus qu'elle a pris au lieu de le revendre. La Rentabilité solaire compte la même chose sur toute la vie de la batterie.",
+      days: "Le plan découpé en journées, à partir de l'heure de début choisie dans les réglages rapides. Le Chef ne décide que la prochaine nuit : la nuit suivante sera décidée la veille au soir.",
+      chart: "Niveau prévu des batteries, prix de l'électricité et heures creuses sur les 48 prochaines heures. Survolez pour le détail d'un quart d'heure.",
+      modes: "Le mode que le Chef donnera aux batteries à chaque moment : arrêt, charge réseau, couplage intelligent (la batterie alimente la maison) ou réserve (elle stocke seulement le solaire).",
+      settings: "Prudence : marge ajoutée au besoin de demain. Seuil : gain minimal par kWh pour charger la nuit. Début de journée : où commencent les cases du plan.",
+    },
   },
   en: {
     title: "Energy conductor",
@@ -54,7 +80,30 @@ const I18N = {
       off_peak_price: "off-peak price", error: "calculation error (see the logs)" },
     modeNames: { off: "Off", grid_charge: "Grid charge", smart: "Smart matching", smart_charge: "Reserve (stores solar)" },
     profiles: { cautious: "Cautious", balanced: "Balanced", economical: "Economical" },
-    ed: { name: "Title", show_chart: "Show the 48 h chart", show_modes: "Show the mode strip", show_settings: "Show quick settings" },
+    ed: { name: "Title", show_chart: "Show the 48 h chart", show_modes: "Show the mode strip", show_settings: "Show quick settings", show_days: "Show the plan for today and tomorrow" },
+    nightActive: "Tonight: the battery powers the house down to {floor} %, tomorrow's sun will refill it",
+    nightKept: "Tonight: battery kept for tomorrow (need {need} kWh)",
+    nightKeptNoNeed: "Tonight: battery kept for tomorrow",
+    nightUnavailable: "Night on battery unavailable: no solar forecast",
+    efficiency: "Efficiency", measuredAc: "measured at the plug", typed: "entered", wear: "Wear", wearPayback: "Solar payback", wearManual: "entered",
+    dayToday: "Today's plan", dayTomorrow: "Tomorrow's plan", forecast: "Forecast", tomorrow: "tomorrow",
+    chargeLine: "Charge {kwh} kWh from {from} to {to}", targetSoc: "target SOC {soc} %", noCharge: "No charge", decidedEve: "Charge decided the evening before",
+    reserveLine: "Reserve {soc} % from {from} to {to}", nightFloor: "Night on battery down to {soc} %",
+    socLine: "Battery: {a} % → low {b} % → {c} %", energyLine: "Solar {s} kWh · use {c} kWh · grid {g} kWh", cost: "Charge cost",
+    truncated: "until {t} (end of forecast)", dayStart: "Day start", dayStarts: { off_peak_end: "End of off-peak", off_peak_start: "Start of off-peak", midnight: "Midnight", fixed: "Fixed time" },
+    help: {
+      plan: "What the Energy conductor decided for the next night: charge from the grid during off-peak hours or not, and why. Tap the block for details.",
+      nightActive: "Tomorrow's forecast sun will refill the battery. It can therefore power the house tonight, keeping enough to cover tomorrow's peak hours before the sun, with a margin.",
+      nightKept: "The battery does not go down tonight: tomorrow's sun will not be enough to refill it, and its energy is worth more at peak hours.",
+      efficiency: "Measured at the plug over 30 days: what comes out to the house for what came in from the grid. Without a reliable measurement (outside 60 to 95 %), the entered efficiency is used.",
+      wear: "The wear cost per kWh delivered, read from Solar payback or entered, added to the cost of a charge.",
+      gain: "What tonight's charge should save tomorrow: the energy delivered at peak hours, minus its off-peak cost, losses and wear included.",
+      savings: "What the battery avoided buying, minus the cost of charging it and of the surplus it took instead of selling it. Solar payback counts the same over the whole life of the battery.",
+      days: "The plan cut into days, from the start time chosen in the quick settings. The conductor only decides the next night: the following one is decided the evening before.",
+      chart: "Forecast battery level, electricity price and off-peak hours over the next 48 hours. Hover for a quarter-hour's details.",
+      modes: "The mode the conductor gives the batteries at each moment: off, grid charge, smart matching (the battery powers the house) or reserve (it only stores solar).",
+      settings: "Caution: margin added to tomorrow's need. Threshold: minimum gain per kWh to charge at night. Day start: where the plan's days begin.",
+    },
   },
 };
 
@@ -69,7 +118,7 @@ const PLAN_ICONS = {
 };
 const KEYS = [
   "night_plan", "energy_to_charge", "target_soc", "charge_start", "forecast_gain", "monthly_savings",
-  "auto_control", "profile", "gain_threshold", "power_alert", "recalculate",
+  "auto_control", "profile", "gain_threshold", "power_alert", "recalculate", "day_start", "day_start_time",
 ];
 const num = (v) => {
   const n = parseFloat(v);
@@ -82,10 +131,10 @@ class ChefOrchestreCard extends HTMLElement {
     return document.createElement("chef-orchestre-card-editor");
   }
   static getStubConfig() {
-    return { show_chart: true, show_modes: true, show_settings: true };
+    return { show_chart: true, show_modes: true, show_settings: true, show_days: true };
   }
   setConfig(config) {
-    this._config = { show_chart: true, show_modes: true, show_settings: true, ...(config || {}) };
+    this._config = { show_chart: true, show_modes: true, show_settings: true, show_days: true, ...(config || {}) };
     this._sig = null;
     if (this._hass) this._render();
   }
@@ -204,12 +253,34 @@ class ChefOrchestreCard extends HTMLElement {
     const startDate = startRaw && !["unknown", "unavailable"].includes(startRaw) ? new Date(startRaw) : null;
     const gain = num(this._st("forecast_gain")?.state);
     const sav = num(this._st("monthly_savings")?.state);
-    const tile = (key, icon, label, value, dim = false) => `
+    const ib = (k) => `<button class="ib" data-help="${k}" title="i">i</button>`;
+    const hp = (k) => `<div class="help ${this._open?.has(k) ? "show" : ""}" data-for="${k}">${esc(t.help[k])}</div>`;
+    const tile = (key, icon, label, value, dim = false, help = "") => `
       <div class="tile ${dim ? "dim" : ""}" data-more="${key}">
-        <ha-icon icon="${icon}"></ha-icon><span class="v">${value}</span><span class="l">${esc(label)}</span>
+        <ha-icon icon="${icon}"></ha-icon><span class="v">${value}</span><span class="l">${esc(label)}${help}</span>
       </div>`;
 
     const reason = this._fmtAttr("night_plan", "reason");
+    // v1.4.0 (P1) : nuit sur batterie
+    const nob = a.night_on_battery;
+    let night = "";
+    if (nob === "active" && a.night_floor_soc != null) {
+      night = `<div class="note ok"><ha-icon icon="mdi:weather-night"></ha-icon><span>${esc(t.nightActive.replace("{floor}", this._nf(a.night_floor_soc, 0)))}${ib("nightActive")}</span></div>${hp("nightActive")}`;
+    } else if (nob === "kept") {
+      const need = a.tomorrow_need_kwh;
+      const txt = need != null ? t.nightKept.replace("{need}", this._nf(need, 1)) : t.nightKeptNoNeed;
+      night = `<div class="note"><ha-icon icon="mdi:battery-lock"></ha-icon><span>${esc(txt)}${ib("nightKept")}</span></div>${hp("nightKept")}`;
+    } else if (nob === "unavailable") {
+      night = `<div class="note"><ha-icon icon="mdi:weather-cloudy-alert"></ha-icon><span>${esc(t.nightUnavailable)}</span></div>`;
+    }
+    // v1.4.0 (C0, C4) : rendement mesuré côté prise et usure
+    const eff = num(a.efficiency);
+    const wear = num(a.wear);
+    const details = eff !== null ? `
+      <div class="details">
+        <span>${esc(t.efficiency)} ${this._nf(eff * 100, 0)} %${ib("efficiency")}</span>
+        ${wear !== null ? `<span>${esc(t.wear)} ${this._nf(wear, 3)} €/kWh (${esc(a.wear_source === "solar_payback" ? t.wearPayback : t.wearManual)})${ib("wear")}</span>` : ""}
+      </div>${hp("efficiency")}${wear !== null ? hp("wear") : ""}` : "";
     const html = `
       <style>${STYLE}</style>
       <ha-card style="--plan:${color}">
@@ -223,10 +294,13 @@ class ChefOrchestreCard extends HTMLElement {
         <div class="plan" data-more="night_plan">
           <div class="badge"><ha-icon icon="${PLAN_ICONS[state] || "mdi:battery-clock"}"></ha-icon></div>
           <div>
-            <div class="state">${esc(this._fmtState("night_plan"))}</div>
+            <div class="state">${esc(this._fmtState("night_plan"))}${ib("plan")}</div>
             <div class="reason">${esc(reason)}</div>
           </div>
         </div>
+        ${hp("plan")}
+        ${night}
+        ${details}
 
         ${alerts.map(([i, m, c]) => `<div class="alert ${c}"><ha-icon icon="${i}"></ha-icon><span>${esc(m)}</span></div>`).join("")}
 
@@ -234,13 +308,15 @@ class ChefOrchestreCard extends HTMLElement {
           ${tile("energy_to_charge", "mdi:battery-arrow-up", t.toCharge, charge && energy !== null ? `${this._nf(energy, 1)} kWh` : "—", !charge)}
           ${tile("target_soc", "mdi:battery-high", t.target, charge && soc !== null ? `${this._nf(soc, 0)} %` : "—", !charge)}
           ${tile("charge_start", "mdi:clock-start", t.start, charge && startDate ? this._time(startDate) : "—", !charge)}
-          ${tile("forecast_gain", "mdi:cash-plus", t.gain, gain !== null ? this._money(gain) : "—")}
-          ${tile("monthly_savings", "mdi:piggy-bank-outline", t.savings, sav !== null ? this._money(sav) : "—")}
+          ${tile("forecast_gain", "mdi:cash-plus", t.gain, gain !== null ? this._money(gain) : "—", false, ib("gain"))}
+          ${tile("monthly_savings", "mdi:piggy-bank-outline", t.savings, sav !== null ? this._money(sav) : "—", false, ib("savings"))}
         </div>
+        ${hp("gain")}${hp("savings")}
 
-        ${this._config.show_chart && steps.length > 1 ? this._chart(steps) : ""}
-        ${this._config.show_modes && steps.length > 1 ? this._modes(steps) : ""}
-        ${this._config.show_settings ? this._settings() : ""}
+        ${this._config.show_days && Array.isArray(a.days) && a.days.length ? this._days(a.days, ib, hp) : ""}
+        ${this._config.show_chart && steps.length > 1 ? this._chart(steps, ib, hp) : ""}
+        ${this._config.show_modes && steps.length > 1 ? this._modes(steps, ib, hp) : ""}
+        ${this._config.show_settings ? this._settings(ib, hp) : ""}
       </ha-card>`;
     this.shadowRoot.innerHTML = html;
     this._wire(steps);
@@ -251,7 +327,7 @@ class ChefOrchestreCard extends HTMLElement {
   }
 
   /* --------------------------------- graphique des 48 h --------------------------------- */
-  _chart(steps) {
+  _chart(steps, ib, hp) {
     const t = this._t;
     const W = Math.max(280, Math.round(this._width || 600)), H = 210, L = 34, R = 44, T = 12, B = 26;
     const t0 = Date.parse(steps[0].start);
@@ -315,7 +391,7 @@ class ChefOrchestreCard extends HTMLElement {
       : "";
     return `
       <div class="section">
-        <div class="sec-title">${esc(t.next48)}</div>
+        <div class="sec-title">${esc(t.next48)}${ib("chart")}</div>${hp("chart")}
         <div class="chart">
           <svg viewBox="0 0 ${W} ${H}" id="svg">
             ${bands}${ticks}
@@ -340,7 +416,7 @@ class ChefOrchestreCard extends HTMLElement {
   }
 
   /* ------------------------------------ frise des modes ------------------------------------ */
-  _modes(steps) {
+  _modes(steps, ib, hp) {
     const t = this._t;
     const runs = [];
     for (const s of steps) {
@@ -351,7 +427,7 @@ class ChefOrchestreCard extends HTMLElement {
     const used = [...new Set(steps.map((s) => s.mode))];
     return `
       <div class="section">
-        <div class="sec-title">${esc(t.modes)}</div>
+        <div class="sec-title">${esc(t.modes)}${ib("modes")}</div>${hp("modes")}
         <div class="strip">
           ${runs.map((r) => `<div style="flex:${r.n};background:${MODE_COLORS[r.mode] || "#777"}"
               title="${esc(this._time(new Date(r.start), true))} · ${esc(t.modeNames[r.mode] || r.mode)}"></div>`).join("")}
@@ -362,15 +438,80 @@ class ChefOrchestreCard extends HTMLElement {
       </div>`;
   }
 
+  /* ------------------------------ plan du jour et du lendemain ------------------------------ */
+  _days(days, ib, hp) {
+    const t = this._t;
+    const c = (s, map) => Object.entries(map).reduce((acc, [k, v]) => acc.replace(`{${k}}`, v), s);
+    const hm = (iso) => (iso ? this._time(new Date(iso)) : "—");
+    const box = (d, i) => {
+      if (!d || d.empty) return "";
+      const start = new Date(d.start), end = new Date(d.end);
+      const period = `${i ? esc(t.tomorrow) + " " : ""}${hm(d.start)} → ${hm(d.end)}`;
+      const lines = [];
+      if (d.charge_kwh > 0) {
+        let l = c(t.chargeLine, { kwh: this._nf(d.charge_kwh, 1), from: hm(d.charge_start), to: hm(d.charge_end) });
+        if (d.target_soc != null) l += `, ${c(t.targetSoc, { soc: this._nf(d.target_soc, 0) })}`;
+        lines.push(["mdi:battery-charging-high", l]);
+      } else if (d.night_decided) {
+        const why = d.night_state && this._hass.formatEntityState ? this._hass.formatEntityState(this._st("night_plan"), d.night_state) : "";
+        lines.push(["mdi:battery-off-outline", t.noCharge + (why ? ` : ${why}` : "")]);
+      } else {
+        lines.push(["mdi:calendar-clock", t.decidedEve]);
+      }
+      if (d.reserve_soc != null) lines.push(["mdi:battery-lock", c(t.reserveLine, { soc: this._nf(d.reserve_soc, 0), from: hm(d.reserve_from), to: hm(d.reserve_until) })]);
+      if (d.night_floor_soc != null) lines.push(["mdi:weather-night", c(t.nightFloor, { soc: this._nf(d.night_floor_soc, 0) })]);
+      lines.push(["mdi:battery-medium", c(t.socLine, { a: this._nf(d.soc_start, 0), b: this._nf(d.soc_min, 0), c: this._nf(d.soc_end, 0) })]);
+      lines.push(["mdi:flash", c(t.energyLine, { s: this._nf(d.solar_kwh, 1), c: this._nf(d.consumption_kwh, 1), g: this._nf(d.charge_kwh, 1) })]);
+      lines.push(["mdi:cash", `${t.cost} : ${d.cost != null ? this._money(d.cost) : "—"}`]);
+      // Frise de la journée, à partir des changements de mode
+      const span = end - start;
+      const modes = Array.isArray(d.modes) ? d.modes : [];
+      const stop = d.truncated_at ? new Date(d.truncated_at) : end;
+      const strip = modes.map(([iso, m], k) => {
+        const a0 = Math.max(new Date(iso) - start, 0);
+        const a1 = (k + 1 < modes.length ? new Date(modes[k + 1][0]) : stop) - start;
+        return `<div style="left:${(a0 / span) * 100}%;width:${(Math.max(a1 - a0, 0) / span) * 100}%;background:${MODE_COLORS[m] || "#777"}" title="${esc(t.modeNames[m] || m)}"></div>`;
+      }).join("");
+      return `
+        <div class="day" data-more="night_plan">
+          <div class="dhead"><b>${esc(i ? t.dayTomorrow : t.dayToday)}</b>${i ? `<span class="fc">${esc(t.forecast)}</span>` : ""}</div>
+          <div class="dper">${period}${d.truncated_at ? ` · ${esc(c(t.truncated, { t: hm(d.truncated_at) }))}` : ""}</div>
+          <div class="dstrip">${strip}</div>
+          ${lines.map(([ic, l]) => `<div class="dl"><ha-icon icon="${ic}"></ha-icon><span>${esc(l)}</span></div>`).join("")}
+        </div>`;
+    };
+    return `
+      <div class="section">
+        <div class="sec-title">${esc(t.dayToday)} · ${esc(t.dayTomorrow)}${ib("days")}</div>${hp("days")}
+        <div class="days">${days.map((d, i) => box(d, i)).join("")}</div>
+      </div>`;
+  }
+
+  _dayStartRow() {
+    const t = this._t;
+    const sel = this._st("day_start");
+    if (!sel) return "";
+    const opts = sel.attributes?.options || Object.keys(t.dayStarts);
+    const tm = this._st("day_start_time")?.state;
+    return `
+          <div class="row">
+            <span class="lbl">${esc(t.dayStart)}</span>
+            <div class="chips">
+              ${opts.map((o) => `<button class="chip ${sel.state === o ? "sel" : ""}" data-daystart="${esc(o)}">${esc(t.dayStarts[o] || o)}</button>`).join("")}
+              ${sel.state === "fixed" ? `<input type="time" id="daytime" value="${esc((tm || "06:00").slice(0, 5))}"/>` : ""}
+            </div>
+          </div>`;
+  }
+
   /* ----------------------------------- réglages rapides ----------------------------------- */
-  _settings() {
+  _settings(ib, hp) {
     const t = this._t;
     const prof = this._st("profile");
     const thr = num(this._st("gain_threshold")?.state);
     const opts = prof?.attributes?.options || ["cautious", "balanced", "economical"];
     return `
       <div class="section">
-        <div class="sec-title">${esc(t.settings)}</div>
+        <div class="sec-title">${esc(t.settings)}${ib("settings")}</div>${hp("settings")}
         <div class="settings">
           <div class="row">
             <span class="lbl">${esc(t.profile)}</span>
@@ -384,6 +525,7 @@ class ChefOrchestreCard extends HTMLElement {
               <input type="number" id="thr" min="0" max="1" step="0.005" value="${thr ?? ""}"/><span>€/kWh</span>
             </div>
           </div>
+          ${this._dayStartRow()}
           <button class="recalc" id="recalc"><ha-icon icon="mdi:refresh"></ha-icon>${esc(t.recalc)}</button>
         </div>
       </div>`;
@@ -401,6 +543,19 @@ class ChefOrchestreCard extends HTMLElement {
       const v = num(ev.target.value);
       if (v !== null && v >= 0 && v <= 1) this._call("number", "set_value", { entity_id: this._ents.gain_threshold, value: v });
     });
+    root.querySelectorAll("[data-daystart]").forEach((el) =>
+      el.addEventListener("click", () => this._call("select", "select_option", { entity_id: this._ents.day_start, option: el.dataset.daystart })));
+    root.getElementById("daytime")?.addEventListener("change", (ev) => {
+      if (ev.target.value) this._call("time", "set_value", { entity_id: this._ents.day_start_time, time: `${ev.target.value}:00` });
+    });
+    // Boutons « i » : le texte s'ouvre sous le bloc, sans ouvrir la fenêtre de l'entité
+    root.querySelectorAll(".ib").forEach((b) => b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const k = b.dataset.help;
+      this._open = this._open || new Set();
+      if (this._open.has(k)) this._open.delete(k); else this._open.add(k);
+      root.querySelector(`.help[data-for="${k}"]`)?.classList.toggle("show", this._open.has(k));
+    }));
     root.getElementById("recalc")?.addEventListener("click", () => this._call("button", "press", { entity_id: this._ents.recalculate }));
 
     const hit = root.getElementById("hit");
@@ -456,6 +611,7 @@ class ChefOrchestreCardEditor extends HTMLElement {
         { name: "show_chart", selector: { boolean: {} } },
         { name: "show_modes", selector: { boolean: {} } },
         { name: "show_settings", selector: { boolean: {} } },
+        { name: "show_days", selector: { boolean: {} } },
       ];
       this._form.computeLabel = (s) => t[s.name] || s.name;
       this._form.addEventListener("value-changed", (ev) => {
@@ -467,7 +623,7 @@ class ChefOrchestreCardEditor extends HTMLElement {
       this.appendChild(this._form);
     }
     this._form.hass = this._hass;
-    this._form.data = { show_chart: true, show_modes: true, show_settings: true, ...this._config };
+    this._form.data = { show_chart: true, show_modes: true, show_settings: true, show_days: true, ...this._config };
   }
 }
 
@@ -555,9 +711,32 @@ const STYLE = `
             color: var(--c-muted); font-size: .85em; padding: 2px 0; }
   .recalc:hover { color: var(--primary-text-color); }
 
+  .ib { width: 17px; height: 17px; margin-left: 6px; border-radius: 50%; border: 1px solid currentColor; background: none;
+        font-size: 11px; line-height: 15px; padding: 0; text-align: center; opacity: .6; vertical-align: middle; font-style: italic;
+        text-transform: none; letter-spacing: 0; font-weight: 600; }
+  .ib:hover { opacity: 1; }
+  .help { display: none; font-size: .8em; line-height: 1.4; color: var(--c-muted); padding: 2px 4px; }
+  .help.show { display: block; }
+  .note { display: flex; gap: 8px; align-items: center; font-size: .88em; padding: 7px 10px; border-radius: 10px; background: var(--c-panel); }
+  .note.ok { background: color-mix(in srgb, var(--c-teal) 14%, transparent); }
+  .note ha-icon { flex: none; color: var(--c-muted); }
+  .details { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: .8em; color: var(--c-muted); }
+  .days { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .day { background: var(--c-panel); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; min-width: 0; }
+  .dhead { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .fc { font-size: .7em; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--c-blue) 22%, transparent); color: var(--c-blue); }
+  .dper { font-size: .78em; color: var(--c-muted); }
+  .dstrip { position: relative; height: 8px; border-radius: 4px; overflow: hidden; background: var(--c-line); margin: 2px 0 4px; }
+  .dstrip div { position: absolute; top: 0; bottom: 0; }
+  .dl { display: flex; gap: 6px; align-items: flex-start; font-size: .8em; }
+  .dl ha-icon { --mdc-icon-size: 15px; color: var(--c-muted); flex: none; margin-top: 1px; }
+  #daytime { padding: 3px 6px; border-radius: 8px; border: 1px solid var(--c-line); font: inherit; font-size: .82em;
+             background: transparent; color: var(--primary-text-color); }
+
   @container (max-width: 460px) {
     .tiles { grid-template-columns: repeat(3, 1fr); }
     .auto span { display: none; }
+    .days { grid-template-columns: 1fr; }
   }
 `;
 

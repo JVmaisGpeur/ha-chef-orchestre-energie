@@ -314,3 +314,84 @@ def test_ecart_de_prix_et_fin_de_charge():
     plan = P.compute_plan(build(), bat(cap=20), P.Settings())
     assert abs(plan.price_gap - (0.30 - 0.20 / 0.85)) < 1e-3
     assert plan.charge_start < plan.charge_end <= plan.window_end
+
+
+# ---------------------------------------------------------------- P1 (v1.4.0) : nuit sur batterie
+P1 = P.Settings(night_on_battery=True)
+
+
+def test_p1_ete_la_batterie_alimente_la_nuit():
+    # Batterie pleine, grand soleil demain : la maison vit sur la batterie en heures creuses
+    plan = P.compute_plan(build(solar_kw=sunny, cons_kw=0.4), bat(soc=90), P1)
+    assert plan.night_on_battery == "active"
+    night = [sp for sp in plan.steps if sp.off_peak and sp.start.date() == datetime(2026, 11, 24).date()]
+    assert any(sp.mode == P.MODE_SMART and sp.discharge_kwh > 0 for sp in night)
+    assert plan.night_floor_soc is not None and plan.night_floor_soc >= 10
+    # la batterie ne descend jamais sous le plancher pendant les heures creuses
+    for sp in plan.steps:
+        if sp.floor_soc is not None:
+            assert sp.soc >= sp.floor_soc - 0.5
+    assert all(sp.charge_kwh == 0 for sp in plan.steps)
+
+
+def test_p1_sans_reglage_comportement_inchange():
+    plan = P.compute_plan(build(solar_kw=sunny, cons_kw=0.4), bat(soc=90), P.Settings())
+    assert plan.night_on_battery == "off"
+    assert all(sp.floor_soc is None for sp in plan.steps)
+
+
+def test_p1_hiver_sans_soleil_la_batterie_garde_le_besoin():
+    # 1,2 kWh dans la batterie mais 10 kWh d'heures pleines demain, pas de soleil :
+    # le plancher dépasse l'énergie, la batterie ne se vide pas la nuit
+    plan = P.compute_plan(build(hp=0.25, hc=0.21), bat(soc=20), P1)
+    assert plan.state == P.PLAN_NOT_PROFITABLE
+    assert plan.night_on_battery == "kept"
+    night = [sp for sp in plan.steps if sp.off_peak]
+    assert all(sp.discharge_kwh == 0 for sp in night)
+
+
+def test_p1_nuit_de_charge_inchangee():
+    a = P.compute_plan(build(), bat(cap=20), P.Settings())
+    b = P.compute_plan(build(), bat(cap=20), P1)
+    assert b.state == P.PLAN_CHARGE and b.night_on_battery == "off"
+    assert [sp.mode for sp in a.steps] == [sp.mode for sp in b.steps]
+
+
+def test_p1_forcer_la_nuit_desactive_p1():
+    plan = P.compute_plan(build(solar_kw=sunny, cons_kw=0.4), bat(soc=90), P1, P.Override("idle"))
+    assert plan.night_on_battery == "off"
+
+
+def test_p1_week_end_garde_la_reserve_seulement():
+    # Samedi : tout en HC, aucune heure pleine dans l'horizon -> on garde la réserve (2 kWh)
+    start = datetime(2026, 11, 28, 20, 0, tzinfo=TZ)
+    plan = P.compute_plan(build(start=start, hc_hours=lambda t: True, hours=24), bat(soc=90), P1)
+    assert plan.night_on_battery == "active"
+    floors = [sp.floor_soc for sp in plan.steps if sp.floor_soc is not None]
+    assert floors and all(abs(f - (10 + 2.0 / 12 * 100)) < 0.6 for f in floors)
+    assert min(sp.soc for sp in plan.steps) >= 10 + 2.0 / 12 * 100 - 0.6
+
+
+def test_p1_reserve_r1_remplacee_par_le_plancher():
+    plan = P.compute_plan_with_reserve(build(hp=0.25, hc=0.21, solar_kw=sunny), bat(soc=90), P1, reserve_soc=50)
+    assert plan.night_on_battery == "active"
+    assert plan.reserve_soc is None
+
+
+def test_p1_floor_at():
+    plan = P.compute_plan(build(solar_kw=sunny, cons_kw=0.4), bat(soc=90), P1)
+    sp = next(sp for sp in plan.steps if sp.floor_soc is not None and sp.mode == P.MODE_SMART)
+    assert plan.floor_at(sp.start + timedelta(minutes=5)) == sp.floor_soc
+    day = next(sp for sp in plan.steps if not sp.off_peak)
+    assert plan.floor_at(day.start) is None
+
+
+def test_p1_batterie_a_l_arret_pendant_une_charge_planifiee():
+    def ballon(t):  # chauffe du ballon de 02:00 à 04:00
+        return 2500.0 if 2 <= t.hour < 4 else 0.0
+
+    plan = P.compute_plan(build(solar_kw=sunny, cons_kw=0.4, loads_w=ballon), bat(soc=90), P1)
+    assert plan.night_on_battery == "active"
+    heating = [sp for sp, st in zip(plan.steps, build(loads_w=ballon)) if st.loads_w > 0]
+    assert heating and all(sp.mode != P.MODE_SMART and sp.discharge_kwh == 0 for sp in heating)
+    assert plan.next_peak_overflow_kwh is not None

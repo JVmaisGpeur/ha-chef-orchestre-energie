@@ -19,12 +19,16 @@
         "data": {
           "gain_threshold": "Seuil de rentabilité",
           "efficiency": "Rendement aller-retour de la batterie",
-          "reserve_soc": "Réserve quand la recharge n'est pas rentable"
+          "reserve_soc": "Réserve quand la recharge n'est pas rentable",
+          "night_on_battery": "Nuit sur batterie quand le soleil de demain suffit",
+          "night_reserve": "Réserve gardée la nuit en plus du besoin de demain"
         },
         "data_description": {
           "gain_threshold": "La batterie ne charge en heures creuses que si chaque kWh rendu rapporte au moins ce montant (0,02 par défaut).",
           "efficiency": "85 % par défaut, puis appris sur 30 jours à partir des compteurs de la batterie.",
-          "reserve_soc": "SOC min appliqué aux batteries pendant les heures creuses d'une nuit non rentable (50 % par défaut). En heures pleines, les batteries descendent toujours jusqu'à votre propre SOC min. Vos réglages reviennent à la fin des heures creuses, dès que c'est rentable ou quand le pilotage est coupé."
+          "reserve_soc": "SOC min appliqué aux batteries pendant les heures creuses d'une nuit non rentable (50 % par défaut). En heures pleines, les batteries descendent toujours jusqu'à votre propre SOC min. Vos réglages reviennent à la fin des heures creuses, dès que c'est rentable ou quand le pilotage est coupé.",
+          "night_on_battery": "Quand le soleil attendu avant les prochaines heures pleines rechargera les batteries, le Chef les laisse alimenter la maison pendant les heures creuses au lieu d'acheter au réseau. Il arrête la décharge dès que le niveau nécessaire aux prochaines heures pleines (plus la marge et la réserve ci-dessous) est atteint. Activé par défaut.",
+          "night_reserve": "Énergie toujours gardée dans les batteries à la fin d'une nuit sur batterie, en plus du besoin des prochaines heures pleines (2 kWh par défaut)."
         }
       },
       "loads": {
@@ -122,17 +126,23 @@
         "title": "Économie",
         "data": {
           "efficiency": "Rendement aller-retour de la batterie",
+          "wear_source": "Source de l'usure de la batterie",
           "wear": "Usure de la batterie par kWh restitué",
           "gain_threshold": "Seuil de rentabilité",
           "profile": "Profil de prudence",
-          "reserve_soc": "Réserve quand la recharge n'est pas rentable"
+          "reserve_soc": "Réserve quand la recharge n'est pas rentable",
+          "night_on_battery": "Nuit sur batterie quand le soleil de demain suffit",
+          "night_reserve": "Réserve gardée la nuit en plus du besoin de demain"
         },
         "data_description": {
           "efficiency": "85 % par défaut, puis appris sur 30 jours à partir des compteurs d'énergie de la batterie.",
+          "wear_source": "Lue dans la Rentabilité solaire : son coût de stockage (usure par kWh restitué) remplace la valeur ci-dessous tant qu'il est disponible. Saisie : la valeur ci-dessous est toujours utilisée.",
           "wear": "Prix de la batterie ÷ (capacité × nombre de cycles annoncé). 0 pour l'ignorer.",
           "gain_threshold": "La batterie ne charge la nuit que si chaque kWh rendu rapporte au moins ce montant (0,02 par défaut).",
           "profile": "Marge ajoutée au besoin des heures pleines : prudent 20 %, équilibré 10 %, économe 0 %.",
-          "reserve_soc": "SOC min appliqué pendant les heures creuses d'une nuit non rentable (50 % par défaut) ; en heures pleines, votre propre SOC min."
+          "reserve_soc": "SOC min appliqué pendant les heures creuses d'une nuit non rentable (50 % par défaut) ; en heures pleines, votre propre SOC min.",
+          "night_on_battery": "Laisse les batteries alimenter la maison la nuit quand le soleil de demain les rechargera.",
+          "night_reserve": "Gardée en plus du besoin des prochaines heures pleines (2 kWh par défaut)."
         }
       },
       "power": {
@@ -330,6 +340,12 @@
         "now": "Maintenant",
         "skip": "Ignorer pour ce cycle"
       }
+    },
+    "wear_source": {
+      "options": {
+        "solar_payback": "Lue dans la Rentabilité solaire",
+        "manual": "Saisie ici"
+      }
     }
   },
   "entity": {
@@ -358,6 +374,22 @@
               "forced_charge": "Charge imposée pour cette nuit",
               "forced_idle": "Repos imposé pour cette nuit",
               "missing_data": "Données manquantes : aucune commande envoyée"
+            }
+          },
+          "night_on_battery": {
+            "name": "Nuit sur batterie",
+            "state": {
+              "active": "La batterie alimente la maison",
+              "kept": "Batterie gardée pour demain",
+              "off": "Désactivée",
+              "unavailable": "Indisponible"
+            }
+          },
+          "wear_source": {
+            "name": "Source de l'usure",
+            "state": {
+              "solar_payback": "Rentabilité solaire",
+              "manual": "Saisie"
             }
           }
         }
@@ -402,6 +434,43 @@
       },
       "full_charge_days": {
         "name": "Charge complète {battery}"
+      },
+      "charge_cost_month": {
+        "name": "Coût de recharge du mois",
+        "state_attributes": {
+          "grid_kwh": {
+            "name": "Énergie réseau chargée"
+          },
+          "solar_kwh": {
+            "name": "Énergie solaire chargée"
+          },
+          "average_price": {
+            "name": "Prix moyen payé"
+          },
+          "solar_value": {
+            "name": "Valeur du surplus solaire stocké"
+          }
+        }
+      },
+      "stock_energy_cost": {
+        "name": "Coût de l'énergie en stock",
+        "state_attributes": {
+          "delivered_cost": {
+            "name": "Coût une fois rendu"
+          },
+          "solar_share": {
+            "name": "Part solaire du stock"
+          },
+          "stock_grid_kwh": {
+            "name": "Stock réseau"
+          },
+          "stock_solar_kwh": {
+            "name": "Stock solaire"
+          },
+          "estimated": {
+            "name": "Estimé"
+          }
+        }
       }
     },
     "switch": {
@@ -433,6 +502,15 @@
           "now": "Maintenant",
           "skip": "Ignorer pour ce cycle"
         }
+      },
+      "day_start": {
+        "name": "Début de journée du plan",
+        "state": {
+          "off_peak_end": "Fin des heures creuses",
+          "off_peak_start": "Début des heures creuses",
+          "midnight": "Minuit",
+          "fixed": "Heure fixe"
+        }
       }
     },
     "number": {
@@ -451,6 +529,11 @@
     "button": {
       "recalculate": {
         "name": "Recalculer"
+      }
+    },
+    "time": {
+      "day_start_time": {
+        "name": "Heure de début de journée"
       }
     }
   },
@@ -471,7 +554,8 @@
           "not_loaded": "L'intégration n'est pas chargée."
         }
       }
-    },    "integration_version": {
+    },
+    "integration_version": {
       "title": "{name} absente ou trop ancienne",
       "description": "Le Chef d'orchestre énergie a besoin de {name} {minimum} ou plus récente (trouvée : {found}). Le pilotage est suspendu jusqu'à sa mise à jour."
     },

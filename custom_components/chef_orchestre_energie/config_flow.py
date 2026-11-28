@@ -46,6 +46,8 @@ from .const import (
     CONF_POWER_SENSOR,
     CONF_PROFILE,
     CONF_RESERVE_SOC,
+    CONF_NIGHT_ON_BATTERY,
+    CONF_NIGHT_RESERVE,
     CONF_SOLAR_ACTUAL,
     CONF_SOLAR_CORRECTION,
     CONF_SOLAR_ENTRIES,
@@ -54,7 +56,9 @@ from .const import (
     CONF_TEMPO_ASSUMPTION,
     CONF_THREE_PHASE,
     CONF_WEAR,
+    CONF_WEAR_SOURCE,
     DEFAULTS,
+    WEAR_SOURCES,
     DOMAIN,
     LOAD_ENERGY_SENSOR,
     LOAD_KIND,
@@ -204,6 +208,13 @@ def _profit_schema(cur: dict) -> vol.Schema:
             ): _num(0, 1, 0.005, "EUR/kWh"),
             vol.Required(CONF_EFFICIENCY, default=cur.get(CONF_EFFICIENCY, DEFAULTS[CONF_EFFICIENCY])): _num(50, 100, 1, "%"),
             vol.Required(CONF_RESERVE_SOC, default=cur.get(CONF_RESERVE_SOC, DEFAULTS[CONF_RESERVE_SOC])): _num(0, 50, 5, "%"),
+            # P1 (v1.4.0)
+            vol.Required(
+                CONF_NIGHT_ON_BATTERY, default=cur.get(CONF_NIGHT_ON_BATTERY, DEFAULTS[CONF_NIGHT_ON_BATTERY])
+            ): selector.BooleanSelector(),
+            vol.Required(
+                CONF_NIGHT_RESERVE, default=cur.get(CONF_NIGHT_RESERVE, DEFAULTS[CONF_NIGHT_RESERVE])
+            ): _num(0, 10, 0.5, "kWh"),
         }
     )
 
@@ -211,6 +222,10 @@ def _profit_schema(cur: dict) -> vol.Schema:
 def _economy_schema(cur: dict) -> vol.Schema:
     return _profit_schema(cur).extend(
         {
+            # C4 (v1.4.0) : usure lue dans la Rentabilité solaire, ou saisie
+            vol.Required(
+                CONF_WEAR_SOURCE, default=cur.get(CONF_WEAR_SOURCE, DEFAULTS[CONF_WEAR_SOURCE])
+            ): _choice(WEAR_SOURCES, "wear_source"),
             vol.Required(CONF_WEAR, default=cur.get(CONF_WEAR, DEFAULTS[CONF_WEAR])): _num(0, 1, 0.005, "EUR/kWh"),
             vol.Required(CONF_PROFILE, default=cur.get(CONF_PROFILE, DEFAULTS[CONF_PROFILE])): _choice(
                 list(PROFILES), "profile"

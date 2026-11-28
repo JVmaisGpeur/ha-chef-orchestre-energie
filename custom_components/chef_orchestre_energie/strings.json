@@ -19,12 +19,16 @@
         "data": {
           "gain_threshold": "Profitability threshold",
           "efficiency": "Battery round-trip efficiency",
-          "reserve_soc": "Reserve when charging is not profitable"
+          "reserve_soc": "Reserve when charging is not profitable",
+          "night_on_battery": "Night on battery when tomorrow's sun is enough",
+          "night_reserve": "Night-time reserve kept on top of tomorrow's need"
         },
         "data_description": {
           "gain_threshold": "The battery only charges off-peak if each kWh given back earns at least this amount (0.02 by default).",
           "efficiency": "85 % by default, then learned over 30 days from the battery counters.",
-          "reserve_soc": "Min SOC applied to the batteries during the off-peak hours of a night that is not profitable (50 % by default). At peak hours the batteries always go down to your own min SOC. Your own settings come back at the end of the off-peak hours, as soon as it is profitable, or when control is turned off."
+          "reserve_soc": "Min SOC applied to the batteries during the off-peak hours of a night that is not profitable (50 % by default). At peak hours the batteries always go down to your own min SOC. Your own settings come back at the end of the off-peak hours, as soon as it is profitable, or when control is turned off.",
+          "night_on_battery": "When the sun expected before the next peak hours will refill the batteries, the Chef lets them power the house during the off-peak hours instead of buying from the grid. It stops the discharge as soon as the level needed for the next peak hours (plus the margin and the reserve below) is reached. On by default.",
+          "night_reserve": "Energy always kept in the batteries at the end of a night on battery, on top of the need of the next peak hours (2 kWh by default)."
         }
       },
       "loads": {
@@ -122,17 +126,23 @@
         "title": "Economics",
         "data": {
           "efficiency": "Battery round-trip efficiency",
+          "wear_source": "Battery wear source",
           "wear": "Battery wear per kWh delivered",
           "gain_threshold": "Profitability threshold",
           "profile": "Caution profile",
-          "reserve_soc": "Reserve when charging is not profitable"
+          "reserve_soc": "Reserve when charging is not profitable",
+          "night_on_battery": "Night on battery when tomorrow's sun is enough",
+          "night_reserve": "Night-time reserve kept on top of tomorrow's need"
         },
         "data_description": {
           "efficiency": "85 % by default, then learned over 30 days from the battery energy counters.",
+          "wear_source": "Read from Solar payback: its storage cost (wear per kWh delivered) replaces the value below while it is available. Entered: the value below is always used.",
           "wear": "Battery price ÷ (capacity × announced cycles). 0 to ignore.",
           "gain_threshold": "A night grid charge only happens if each kWh returned earns at least this much (0.02 by default).",
           "profile": "Safety margin added to the peak-hour need: cautious 20 %, balanced 10 %, economical 0 %.",
-          "reserve_soc": "Min SOC applied during the off-peak hours of a night that is not profitable (50 % by default); at peak hours, your own min SOC."
+          "reserve_soc": "Min SOC applied during the off-peak hours of a night that is not profitable (50 % by default); at peak hours, your own min SOC.",
+          "night_on_battery": "Lets the batteries power the house at night when tomorrow's sun will refill them.",
+          "night_reserve": "Kept on top of the need of the next peak hours (2 kWh by default)."
         }
       },
       "power": {
@@ -330,6 +340,12 @@
         "now": "Now",
         "skip": "Skip this cycle"
       }
+    },
+    "wear_source": {
+      "options": {
+        "solar_payback": "Read from Solar payback",
+        "manual": "Entered here"
+      }
     }
   },
   "entity": {
@@ -358,6 +374,22 @@
               "forced_charge": "Charge forced for tonight",
               "forced_idle": "Rest forced for tonight",
               "missing_data": "Data missing: no command sent"
+            }
+          },
+          "night_on_battery": {
+            "name": "Night on battery",
+            "state": {
+              "active": "The battery powers the house",
+              "kept": "Battery kept for tomorrow",
+              "off": "Off",
+              "unavailable": "Unavailable"
+            }
+          },
+          "wear_source": {
+            "name": "Wear source",
+            "state": {
+              "solar_payback": "Solar payback",
+              "manual": "Entered"
             }
           }
         }
@@ -402,6 +434,43 @@
       },
       "full_charge_days": {
         "name": "Full charge {battery}"
+      },
+      "charge_cost_month": {
+        "name": "Charge cost this month",
+        "state_attributes": {
+          "grid_kwh": {
+            "name": "Grid energy charged"
+          },
+          "solar_kwh": {
+            "name": "Solar energy charged"
+          },
+          "average_price": {
+            "name": "Average price paid"
+          },
+          "solar_value": {
+            "name": "Value of the stored solar surplus"
+          }
+        }
+      },
+      "stock_energy_cost": {
+        "name": "Cost of the stored energy",
+        "state_attributes": {
+          "delivered_cost": {
+            "name": "Cost once delivered"
+          },
+          "solar_share": {
+            "name": "Solar share of the stock"
+          },
+          "stock_grid_kwh": {
+            "name": "Grid stock"
+          },
+          "stock_solar_kwh": {
+            "name": "Solar stock"
+          },
+          "estimated": {
+            "name": "Estimated"
+          }
+        }
       }
     },
     "switch": {
@@ -433,6 +502,15 @@
           "now": "Now",
           "skip": "Skip this cycle"
         }
+      },
+      "day_start": {
+        "name": "Plan day start",
+        "state": {
+          "off_peak_end": "End of off-peak hours",
+          "off_peak_start": "Start of off-peak hours",
+          "midnight": "Midnight",
+          "fixed": "Fixed time"
+        }
       }
     },
     "number": {
@@ -451,6 +529,11 @@
     "button": {
       "recalculate": {
         "name": "Recalculate"
+      }
+    },
+    "time": {
+      "day_start_time": {
+        "name": "Plan day start time"
       }
     }
   },
@@ -471,7 +554,8 @@
           "not_loaded": "The integration is not loaded."
         }
       }
-    },    "integration_version": {
+    },
+    "integration_version": {
       "title": "{name} too old or missing",
       "description": "The Energy conductor needs {name} {minimum} or newer (found: {found}). Control is suspended until it is updated."
     },
